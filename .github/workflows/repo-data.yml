@@ -21,8 +21,9 @@ jobs:
       - name: Set Outputs
         id: set_data
         run: |
-          
-          if [ "$GITHUB_REF_NAME" = "main" ] OR [ "$GITHUB_REF_NAME" = "master" ]; then
+          if [ "$GITHUB_REF_NAME" = "main" ]; then
+            IMAGE_TAG="prod-"
+          elif [ "$GITHUB_REF_NAME" = "master" ]; then
             IMAGE_TAG="prod-"
           elif [ "$GITHUB_REF_NAME" = "release/"* ]; then
             IMAGE_TAG="stage-"
