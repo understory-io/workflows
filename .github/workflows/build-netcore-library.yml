@@ -34,14 +34,14 @@ jobs:
           dotnet-version: '6.0.x'
           source-url: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Build and Pack
         if: inputs.versionSuffix != ''
         env:
           MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
-
+        echo "Basename: $basename"
         project_name=$(basename *.sln .sln)
         dotnet pack --configuration ${{ inputs.buildConfiguration }} --version-suffix=${{ inputs.versionSuffix }} --output=package/${{ inputs.buildConfiguration }} $project_name/$project_name.csproj
         
@@ -50,7 +50,6 @@ jobs:
         env:
           MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
-        
         project_name=$(basename *.sln .sln)
         dotnet pack --configuration ${{ inputs.buildConfiguration }} --output=package/${{ inputs.buildConfiguration }} $project_name/$project_name.csproj /p:Version=${{ inputs.version }}
       
