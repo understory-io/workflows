@@ -50,15 +50,15 @@ jobs:
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Authenticate with Github Nuget Repository
+        if: inputs.nuget_username != ''
+        run: |
+          dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --name github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --configfile nuget.config
         
       - name: Build Package
         run: |
           project_name=$(basename *.sln .sln)
-          if [[ ! -z '${{ inputs.nuget_username }}' ]]; then
-            echo "Author: ${{ inputs.nuget_username }}\n"
-            echo "Organization: ${{ github.repository_owner }}\n"
-            dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --name github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --configfile nuget.config
-          fi
           dotnet publish /p:GenerateRuntimeConfigurationFiles=true /p:PublishReadyToRun=true -c ${{ inputs.dotnet_configuration }} --self-contained false -r linux-x64 -o ${GITHUB_WORKSPACE}/out/ $project_name
 
       - name: Configure AWS credentials
