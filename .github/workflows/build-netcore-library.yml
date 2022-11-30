@@ -10,6 +10,9 @@ on:
         required: false
         type: string
         default: ''
+      nuget_username:
+        type: string
+        required: false
       version:
         required: false
         type: string
@@ -17,9 +20,12 @@ on:
     secrets:
       myget_nuget_apikey:
         required: true
+      nuget_auth_token:
+        required: true
 
 env:
   MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
+  NUGET_AUTH_TOKEN: ${{ secrets.nuget_auth_token }}
 
 jobs:
   build:
@@ -36,6 +42,11 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
+      - name: Authenticate with Github Nuget Repository
+        if: inputs.nuget_username != ''
+        run: |
+          dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --name github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --configfile nuget.config
+        
       - name: Get Project Name
         id: project_data
         run: |

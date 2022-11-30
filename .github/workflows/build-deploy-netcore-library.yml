@@ -4,6 +4,8 @@ on:
     secrets:
       myget_nuget_apikey:
         required: true
+      nuget_auth_token:
+        required: true
 
 jobs:
   
@@ -13,8 +15,10 @@ jobs:
     with:
       buildConfiguration: 'Debug'
       versionSuffix: alpha.${{ github.run_number }}
+      nuget_username: ${{ github.actor }}
     secrets:
       myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+      nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
   build-and-push-beta:
     if: github.ref == 'refs/heads/develop'
@@ -22,8 +26,10 @@ jobs:
     with:
       buildConfiguration: 'Debug'
       versionSuffix: alpha.${{ github.run_number }}
+      nuget_username: ${{ github.actor }}
     secrets:
       myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+      nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
   build-and-push-rc:
     if: startsWith(github.ref, 'refs/heads/hotfix') || startsWith(github.ref, 'refs/heads/release')
@@ -31,8 +37,10 @@ jobs:
     with:
       buildConfiguration: 'Release'
       versionSuffix: rc.${{ github.run_number }}
+      nuget_username: ${{ github.actor }}
     secrets:
       myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+      nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
   build-and-push-stable:
     if: startsWith(github.ref, 'refs/tags/')
@@ -40,5 +48,7 @@ jobs:
     with:
       buildConfiguration: 'Release'
       version: ${GITHUB_REF/refs\/tags\//}
+      nuget_username: ${{ github.actor }}
     secrets:
       myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+      nuget_auth_token: ${{ secrets.nuget_auth_token }}
