@@ -1,0 +1,44 @@
+name: ".NET Core Library"
+on:
+  workflow_call:
+    secrets:
+      myget_nuget_apikey:
+        required: true
+
+jobs:
+  
+  build-and-push-alpha:
+    if: startsWith(github.ref, 'refs/heads/feature')
+    uses: ./.github/workflows/build-netcore-library.yml
+    with:
+      buildConfiguration: 'Debug'
+      versionSuffix: alpha.${{ github.run_number }}
+    secrets:
+      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+
+  build-and-push-beta:
+    if: github.ref == 'refs/heads/develop'
+    uses: ./.github/workflows/build-netcore-library.yml
+    with:
+      buildConfiguration: 'Debug'
+      versionSuffix: alpha.${{ github.run_number }}
+    secrets:
+      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+
+  build-and-push-rc:
+    if: startsWith(github.ref, 'refs/heads/hotfix') || startsWith(github.ref, 'refs/heads/release')
+    uses: ./.github/workflows/build-netcore-library.yml
+    with:
+      buildConfiguration: 'Release'
+      versionSuffix: rc.${{ github.run_number }}
+    secrets:
+      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
+
+  build-and-push-stable:
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/build-netcore-library.yml
+    with:
+      buildConfiguration: 'Release'
+      version: ${GITHUB_REF/refs\/tags\//}
+    secrets:
+      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
