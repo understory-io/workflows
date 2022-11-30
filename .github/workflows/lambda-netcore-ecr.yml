@@ -54,7 +54,7 @@ jobs:
       - name: Build Package
         run: |
           project_name=$(basename *.sln .sln)
-          if [[ -z '${{ inputs.nuget_username }}' ]]; then
+          if [[ ! -z '${{ inputs.nuget_username }}' ]]; then
             echo "Author: ${{ inputs.nuget_username }}\n"
             echo "Organization: ${{ github.repository_owner }}\n"
             dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --name github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --configfile nuget.config
