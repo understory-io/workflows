@@ -37,8 +37,10 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Get Project Name
+        id: project_data
         run: |
           project_name=$(basename *.sln .sln)
+          echo "project_name=$project_name" >> $GITHUB_OUTPUT
           echo "Project name: $project_name"
 
       - name: Build and Pack
@@ -46,14 +48,14 @@ jobs:
         env:
           MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
-          dotnet pack --configuration ${{ inputs.buildConfiguration }} --version-suffix=${{ inputs.versionSuffix }} --output=package/${{ inputs.buildConfiguration }} $project_name/$project_name.csproj
+          dotnet pack --configuration ${{ inputs.buildConfiguration }} --version-suffix=${{ inputs.versionSuffix }} --output=package/${{ inputs.buildConfiguration }} ${{ steps.project_data.outputs.project_name}}/${{ steps.project_data.outputs.project_name}}.csproj
         
       - name: Build and Pack (stable)
         if: inputs.version != ''
         env:
           MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
-          dotnet pack --configuration ${{ inputs.buildConfiguration }} --output=package/${{ inputs.buildConfiguration }} $project_name/$project_name.csproj /p:Version=${{ inputs.version }}
+          dotnet pack --configuration ${{ inputs.buildConfiguration }} --output=package/${{ inputs.buildConfiguration }} ${{ steps.project_data.outputs.project_name}}/${{ steps.project_data.outputs.project_name}}.csproj /p:Version=${{ inputs.version }}
       
       - name: Publish
         run: dotnet nuget push package/${{ inputs.buildConfiguration }}/*.nupkg
