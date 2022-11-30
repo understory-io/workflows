@@ -1,0 +1,7 @@
+          REPO_NAME=${repo#*/}
+          
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "image_tag_prefix=$IMAGE_TAG" >> $GITHUB_OUTPUT
+    outputs:
+      repository_name: ${{ steps.set_data.outputs.repo_name
+      image_tag_prefix: ${{ steps.set_data.outputs.image_tag_prefix
