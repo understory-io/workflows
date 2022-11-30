@@ -42,10 +42,10 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Authenticate with Github Nuget Repository
-        if: inputs.nuget_username != ''
-        run: |
-          dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --name github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --configfile nuget.config
+      #- name: Authenticate with Github Nuget Repository
+      #  if: inputs.nuget_username != ''
+      #  run: |
+      #    dotnet nuget add source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --name github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --configfile nuget.config
         
       - name: Get Project Name
         id: project_data
