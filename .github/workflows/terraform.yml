@@ -1,0 +1,94 @@
+name: "Terraform"
+
+on:
+  workflow_call:
+    inputs:
+      tf_version:
+        required: false
+        type: string
+      tf_workspace:
+        required: true
+        type: string
+      tf_apply:
+        required: false
+        type: boolean
+        description: Set to true, to trigger apply of the code
+    secrets:
+      tf_token:
+        required: true
+
+jobs:
+  terraform:
+    name: "Terraform"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: ${{ inputs.tf_version }}
+          cli_config_credentials_token: ${{ secrets.tf_api_token }}
+
+      - name: Terraform Format
+        id: fmt
+        env:
+          TF_WORKSPACE: ${{ inputs.tf_workspace }}
+        run: terraform fmt -check
+
+      - name: Terraform Init
+        id: init
+        env:
+          TF_WORKSPACE: ${{ inputs.tf_workspace }}
+        run: terraform init
+      
+      - name: Terraform Validate
+        id: validate
+        env:
+          TF_WORKSPACE: ${{ inputs.tf_workspace }}
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        if: github.event_name == 'pull_request'
+        env:
+          TF_WORKSPACE: ${{ inputs.tf_workspace }}
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+
+      - uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            <details>
+            <summary>Show Plan</summary>
+
+            \`\`\`terraform            
+            ${process.env.PLAN}
+            \`\`\`
+            </details>
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Terraform Apply
+        if: inputs.tf_apply
+        env:
+          TF_WORKSPACE: ${{ inputs.tf_workspace }}
+          TF_LOG: debug
+        run: terraform apply -auto-approve -input=false
