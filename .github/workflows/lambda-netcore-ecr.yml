@@ -54,9 +54,8 @@ jobs:
       - name: Build Package
         run: |
           project_name=$(basename *.sln .sln)
-          if [[ -z '${{ inputs.nuget_username }}' ]]
-          then
-            dotnet nuget update source github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text
+          if [[ -z '${{ inputs.nuget_username }}' ]]; then
+            dotnet nuget update source github --username ${{ inputs.nuget_username }} --password ${{ secrets.nuget_auth_token }} --store-password-in-clear-text --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
           fi
           dotnet publish /p:GenerateRuntimeConfigurationFiles=true /p:PublishReadyToRun=true -c ${{ inputs.dotnet_configuration }} --self-contained false -r linux-x64 -o ${GITHUB_WORKSPACE}/out/ $project_name
 
