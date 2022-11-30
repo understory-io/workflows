@@ -41,6 +41,7 @@ jobs:
         env:
           MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
+
         project_name=$(basename *.sln .sln)
         dotnet pack --configuration ${{ inputs.buildConfiguration }} --version-suffix=${{ inputs.versionSuffix }} --output=package/${{ inputs.buildConfiguration }} $project_name/$project_name.csproj
         
@@ -49,6 +50,7 @@ jobs:
         env:
           MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
+        
         project_name=$(basename *.sln .sln)
         dotnet pack --configuration ${{ inputs.buildConfiguration }} --output=package/${{ inputs.buildConfiguration }} $project_name/$project_name.csproj /p:Version=${{ inputs.version }}
       
