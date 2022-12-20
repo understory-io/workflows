@@ -14,7 +14,6 @@ on:
       aws_region:
         required: true
       aws_role_to_assume:
-        type: string
         required: false
 
 
