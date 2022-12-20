@@ -39,7 +39,7 @@ jobs:
           repository: holdbar-com/glue
           ref: main
           path: 'glue'
-          hb_github_token: ${{ secrets.hb_github_token }}
+          token: ${{ secrets.hb_github_token }}
 
       - name: Setup node-aws-env
         uses: ./.github/workflows/setup-node-aws-env.yml
