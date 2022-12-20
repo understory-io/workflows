@@ -15,7 +15,7 @@ on:
         required: true
       aws_role_to_assume:
         required: false
-      hb_github_token:
+      hb_github_ssh_key:
         required: true
 
 
@@ -39,12 +39,7 @@ jobs:
           repository: holdbar-com/glue
           ref: main
           path: 'glue'
-          token: ${{ secrets.hb_github_token }}
-
-      - name: Github NPM Auth
-        run: |
-          git config --global url."https://${{ secrets.hb_github_token }}@github.com/".insteadOf git@github.com:
-          git config --global url."https://${{ secrets.hb_github_token }}@github.com/".insteadOf ssh://git@github.com/
+          ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Checkout node-aws-env
         uses: actions/checkout@v3
@@ -52,7 +47,7 @@ jobs:
           repository: holdbar-com/node-aws-env
           ref: feature/cmd-line-args
           path: 'node-aws-env'
-          token: ${{ secrets.hb_github_token }}
+          token: ${{ secrets.hb_github_ssh_key }}
 
       - name: Install & Setup node-aws-env
         run: |
@@ -72,8 +67,6 @@ jobs:
 
       - name: Build & Deploy
         run: |
-          git config --global url."https://${{ secrets.hb_github_token }}:x-oauth-basic@github.com/".insteadOf git@github.com:
-          git config --global url."https://${{ secrets.hb_github_token }}:x-oauth-basic@github.com/".insteadOf ssh://git@github.com/
           npm install
           tsc 
           eslint
