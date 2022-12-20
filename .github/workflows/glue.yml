@@ -79,5 +79,5 @@ jobs:
           tsc 
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js
-          node ./node_modules/@riddance/env/bin/install.js ${{ env.GITHUB_WORKSPACE }}/checkout
+          node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout
           node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
