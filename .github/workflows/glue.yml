@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+          with:
+            path: './checkout'
         
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -38,7 +40,7 @@ jobs:
         with:
           repository: holdbar-com/glue
           ref: main
-          path: '../glue'
+          path: './glue'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Checkout node-aws-env
@@ -46,7 +48,7 @@ jobs:
         with:
           repository: holdbar-com/node-aws-env
           ref: feature/cmd-line-args
-          path: '../node-aws-env'
+          path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - uses: webfactory/ssh-agent@v0.7.0
@@ -55,11 +57,11 @@ jobs:
 
       - name: Install & Setup node-aws-env
         run: |
-          cd ../node-aws-env
+          cd ./node-aws-env
           npm install -g typescript eslint
           npm install
           tsc
-          cd ${{ env.GITHUB_WORKSPACE }}
+          cd ../checkout/
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
