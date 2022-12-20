@@ -41,11 +41,19 @@ jobs:
           path: 'glue'
           token: ${{ secrets.hb_github_token }}
 
-      - name: Setup node-aws-env
-        uses: ./.github/workflows/setup-node-aws-env.yml
+      - name: Checkout node-aws-env
+        uses: actions/checkout@v3
         with:
+          repository: holdbar-com/node-aws-env
+          ref: feature/cmd-line-args
           path: 'node-aws-env'
-          hb_github_token: ${{ secrets.hb_github_token }}
+          token: ${{ secrets.hb_github_token }}
+
+      - name: Install & Setup node-aws-env
+        run: |
+          cd node-aws-env
+          npm install
+          tsc
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
