@@ -41,6 +41,10 @@ jobs:
           path: 'glue'
           token: ${{ secrets.hb_github_token }}
 
+      - name: Github NPM Auth
+        run: |
+          git config --global url."https://${{ secrets.hb_github_token }}@github.com/".insteadOf git@github.com:
+
       - name: Checkout node-aws-env
         uses: actions/checkout@v3
         with:
