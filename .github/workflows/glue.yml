@@ -63,6 +63,7 @@ jobs:
           tsc
 
       - name: Configure AWS credentials
+        id: aws
         uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.aws_access_key_id }}
@@ -78,7 +79,7 @@ jobs:
           npm install
           tsc 
           eslint
-          echo $AWS_ACCESS_KEY_ID
+          echo "Account Id: ${{steps.aws.outputs.aws-account-id}}"
           node ./node_modules/@riddance/env/bin/prepare.js
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout
           node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
