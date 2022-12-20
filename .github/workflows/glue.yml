@@ -78,4 +78,4 @@ jobs:
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js
           node ./node_modules/@riddance/env/bin/install.js
-          node ./node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
+          node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
