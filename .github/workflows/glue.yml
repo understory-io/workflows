@@ -61,7 +61,6 @@ jobs:
           npm install -g typescript eslint
           npm install
           tsc
-          cd ../checkout/
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -75,6 +74,7 @@ jobs:
 
       - name: Build & Deploy
         run: |
+          cd ./checkout
           npm install
           tsc 
           eslint
