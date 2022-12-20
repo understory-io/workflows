@@ -47,7 +47,7 @@ jobs:
           repository: holdbar-com/node-aws-env
           ref: feature/cmd-line-args
           path: 'node-aws-env'
-          token: ${{ secrets.hb_github_ssh_key }}
+          ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Install & Setup node-aws-env
         run: |
