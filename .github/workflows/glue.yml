@@ -6,9 +6,6 @@ on:
       stage:
         type: string
         required: true
-      aws_role_to_assume:
-        type: string
-        required: false
     secrets:
       aws_access_key_id:
         required: true
@@ -16,6 +13,9 @@ on:
         required: true
       aws_region:
         required: true
+      aws_role_to_assume:
+        type: string
+        required: false
 
 
 
@@ -50,7 +50,7 @@ jobs:
           aws-access-key-id: ${{ secrets.aws_access_key_id }}
           aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
           aws-region: ${{ secrets.aws_region }}
-          role-to-assume: {{ inputs.aws_role_to_assume }}
+          role-to-assume: {{ secrets.aws_role_to_assume }}
           role-session-name: Github-Actions-Glue-Session
 
       - name: Build & Deploy
