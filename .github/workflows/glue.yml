@@ -44,6 +44,7 @@ jobs:
       - name: Github NPM Auth
         run: |
           git config --global url."https://${{ secrets.hb_github_token }}@github.com/".insteadOf git@github.com:
+          git config --global url."https://${{ secrets.hb_github_token }}@github.com/".insteadOf ssh://git@github.com/
 
       - name: Checkout node-aws-env
         uses: actions/checkout@v3
