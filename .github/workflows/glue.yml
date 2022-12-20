@@ -71,7 +71,7 @@ jobs:
 
       - name: Build & Deploy
         run: |
-          
+          git config --global url."https://${{ secrets.hb_github_token }}@github.com/".insteadOf git@github.com:
           npm install
           tsc 
           eslint
