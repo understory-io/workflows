@@ -1,0 +1,63 @@
+name: "Build & Push Glue Lambda Service"
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        type: string
+        required: true
+      aws_role_to_assume: string
+        required: false
+    secrets:
+      aws_access_key_id:
+        required: true
+      aws_secret_access_key:
+        required: true
+      aws_region:
+        required: true
+
+
+
+jobs:
+  build:
+    name: "Build & Push Image"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+
+      - name: Checkout Glue
+        uses: actions/checkout@v3
+        with:
+          repository: holdbar-com/glue
+          ref: main
+          path: 'glue'
+
+      - name: Setup node-aws-env
+        uses: ./.github/workflows/setup-node-aws-env.yml
+        with:
+          path: 'node-aws-env'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+          role-to-assume: {{ inputs.aws_role_to_assume }}
+          role-session-name: Github-Actions-Glue-Session
+
+      - name: Build & Deploy
+        run: |
+          
+          npm install
+          tsc 
+          eslint
+          node ./node_modules/@riddance/env/bin/prepare.js
+          node ./node_modules/@riddance/env/bin/install.js
+          node ./node-aws-env/bin/deploy.js --env ${{ inputs.stage }}

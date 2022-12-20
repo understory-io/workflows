@@ -1,0 +1,27 @@
+name: "Setup node AWS Env"
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        type: string
+        required: false
+        default: ./node-aws-env
+
+jobs:
+  build:
+    name: "Checkout"
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout node-aws-env
+        uses: actions/checkout@v3
+          with:
+            repository: holdbar-com/node-aws-env
+            ref: 'latest'
+            path: ${{ inputs.path }}
+
+      - name: Install
+        run: |
+          cd ${{ inputs.path }}
+          npm install
