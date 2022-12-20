@@ -8,7 +8,7 @@ on:
         required: false
         default: ./node-aws-env
     secrets:
-      hb-github-token:
+      hb_github_token:
         required: true
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
           repository: holdbar-com/node-aws-env
           ref: 'latest'
           path: ${{ inputs.path }}
-          token: ${{ secrets.hb-github-token }}
+          token: ${{ secrets.hb_github_token }}
 
       - name: Install
         run: |
