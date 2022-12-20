@@ -6,8 +6,9 @@ on:
       stage:
         type: string
         required: true
-      aws_role_to_assume: string
+      aws_role_to_assume:
         type: string
+        required: false
     secrets:
       aws_access_key_id:
         required: true
