@@ -78,6 +78,7 @@ jobs:
           npm install
           tsc 
           eslint
+          echo $AWS_ACCESS_KEY_ID
           node ./node_modules/@riddance/env/bin/prepare.js
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout
           node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
