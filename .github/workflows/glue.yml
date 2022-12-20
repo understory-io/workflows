@@ -38,7 +38,7 @@ jobs:
         with:
           repository: holdbar-com/glue
           ref: main
-          path: 'glue'
+          path: '../glue'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Checkout node-aws-env
@@ -46,7 +46,7 @@ jobs:
         with:
           repository: holdbar-com/node-aws-env
           ref: feature/cmd-line-args
-          path: 'node-aws-env'
+          path: '../node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - uses: webfactory/ssh-agent@v0.7.0
@@ -55,10 +55,11 @@ jobs:
 
       - name: Install & Setup node-aws-env
         run: |
-          cd node-aws-env
+          cd ../node-aws-env
           npm install -g typescript eslint
           npm install
           tsc
+          cd ${{ env.GITHUB_WORKSPACE }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -76,5 +77,5 @@ jobs:
           tsc 
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js
-          node ./node_modules/@riddance/env/bin/install.js ./
+          node ./node_modules/@riddance/env/bin/install.js
           node ./node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
