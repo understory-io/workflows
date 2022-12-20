@@ -16,10 +16,10 @@ jobs:
 
       - name: Checkout node-aws-env
         uses: actions/checkout@v3
-          with:
-            repository: holdbar-com/node-aws-env
-            ref: 'latest'
-            path: ${{ inputs.path }}
+        with:
+          repository: holdbar-com/node-aws-env
+          ref: 'latest'
+          path: ${{ inputs.path }}
 
       - name: Install
         run: |
