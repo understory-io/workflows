@@ -7,7 +7,7 @@ on:
         type: string
         required: true
       aws_role_to_assume: string
-        required: false
+        type: string
     secrets:
       aws_access_key_id:
         required: true
