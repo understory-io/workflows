@@ -49,6 +49,10 @@ jobs:
           path: 'node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
+      - uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.hb_github_ssh_key }}
+
       - name: Install & Setup node-aws-env
         run: |
           cd node-aws-env
