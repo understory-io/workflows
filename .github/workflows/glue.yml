@@ -79,7 +79,6 @@ jobs:
           npm install
           tsc 
           eslint
-          echo "Account Id: ${{steps.aws.outputs.aws-account-id}}"
           node ./node_modules/@riddance/env/bin/prepare.js
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout
           node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
