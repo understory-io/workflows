@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           repository: holdbar-com/glue
-          ref: ${{ inputs.stage }}
+          ref: main
           path: './glue'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
@@ -81,4 +81,4 @@ jobs:
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout
-          node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }}
+          node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ../glue/${{ inputs.stage }}/glue.json
