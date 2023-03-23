@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           repository: holdbar-com/node-aws-env
-          ref: feature/secrets
+          ref: feature/integrations
           path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
