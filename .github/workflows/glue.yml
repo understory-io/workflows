@@ -1,4 +1,4 @@
-name: "Build & Push Glue Lambda Service"
+name: "Build & Deploy Glue Lambda Service"
 
 on:
   workflow_call:
@@ -22,7 +22,7 @@ on:
 
 jobs:
   build:
-    name: "Build & Push Image"
+    name: "Build & Deploy Service"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           repository: holdbar-com/node-aws-env
-          ref: feature/integrations
+          ref: v1.0.0
           path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
