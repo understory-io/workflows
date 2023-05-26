@@ -78,7 +78,7 @@ jobs:
       - name: Build & Deploy
         run: |
           cd ./checkout
-          echo -e "@holdbar-com:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
+          echo -e "@holdbar-com:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.hb_github_packages_read_only_token }}" > .npmrc
           npm install
           tsc 
           eslint
