@@ -21,14 +21,14 @@ jobs:
         id: check_translation_status
         run: |
           RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --silent --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{ inputs.poeditor_project }}')
-          RESULT=$(echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" || echo "All languages are fully translated")
+          RESULT=$(echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "{}" || echo "All languages are fully translated")
           
           # Handle newline issues
-          RESULT="${RESULT//$'\n'/' - '}"
+          RESULT="${RESULT//$'\n'/'|'}"
             
         
           echo "CHECK_RESULT=${RESULT}" >> $GITHUB_OUTPUT
-          echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" && exit 1 || echo "All languages are fully translated"
+          echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated|" && exit 1 || echo "All languages are fully translated"
         continue-on-error: true
 
       - uses: actions/github-script@v6
@@ -36,9 +36,21 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const input = "${{ steps.check_translation_status.outputs.CHECK_RESULT }}"
+            const languages = input.split('|');
+            let text = "";
+            if(input.includes('All languages are fully translated')) {
+              text = `All languages are fully translated`;
+            } else {
+              text = `The following languages are not fully translated:`;
+              languages.forEach(function(language) {
+                text += `\n- ${language}`;
+              });
+            }
+
             const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }} \`
 
-            ${{ steps.check_translation_status.outputs.CHECK_RESULT }}
+            ${text}
             
             *Pushed by: @${{ github.actor }}*`;
             github.rest.issues.createComment({
