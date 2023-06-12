@@ -39,7 +39,12 @@ jobs:
           script: |
             const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }} \`
 
-            ${{ steps.check_translation_status.outputs.CHECK_RESULT }}
+            RESULT="${{ steps.check_translation_status.outputs.CHECK_RESULT }}"
+
+            # Handle newline issues
+            RESULT="${RESULT//'%25'/'%'}"
+            RESULT="${RESULT//$'%0A'/'\n'}"
+            RESULT="${RESULT//$'%0D'/'\r'}"
             
             *Pushed by: @${{ github.actor }}*`;
             github.rest.issues.createComment({
