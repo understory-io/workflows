@@ -19,5 +19,5 @@ jobs:
     steps:
       - name: Check translation percentage
         run: |
-          RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{inputs.poeditor_projects}}')
+          RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{ inputs.poeditor_project }}')
           echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" && exit 1 || echo "All languages are fully translated"
