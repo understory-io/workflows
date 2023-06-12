@@ -39,9 +39,7 @@ jobs:
           script: |
             const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }} \`
 
-            \`\`\`
             ${{ steps.check_translation_status.outputs.CHECK_RESULT }}
-            \`\`\`
             
             *Pushed by: @${{ github.actor }}*`;
             github.rest.issues.createComment({
