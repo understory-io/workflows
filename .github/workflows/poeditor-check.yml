@@ -24,9 +24,8 @@ jobs:
           RESULT=$(echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" || echo "All languages are fully translated")
           
           # Handle newline issues
-          RESULT="${RESULT//'%'/'%25'}"
-          RESULT="${RESULT//$'\n'/'%0A'}"
-          RESULT="${RESULT//$'\r'/'%0D'}"
+          RESULT="${RESULT//$'\n'/' - '}"
+            
         
           echo "CHECK_RESULT=${RESULT}" >> $GITHUB_OUTPUT
           echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" && exit 1 || echo "All languages are fully translated"
@@ -39,12 +38,7 @@ jobs:
           script: |
             const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }} \`
 
-            RESULT="${{ steps.check_translation_status.outputs.CHECK_RESULT }}"
-
-            # Handle newline issues
-            RESULT="${RESULT//'%25'/'%'}"
-            RESULT="${RESULT//$'%0A'/'\n'}"
-            RESULT="${RESULT//$'%0D'/'\r'}"
+            ${{ steps.check_translation_status.outputs.CHECK_RESULT }}
             
             *Pushed by: @${{ github.actor }}*`;
             github.rest.issues.createComment({
