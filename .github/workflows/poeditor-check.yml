@@ -18,6 +18,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check translation percentage
+        id: check_translation_status
         run: |
-          RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{ inputs.poeditor_project }}')
+          RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --silent --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{ inputs.poeditor_project }}')
           echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" && exit 1 || echo "All languages are fully translated"
+        continue-on-error: true
+
+      - uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        env:
+          RESULT: "terraform\n${{ steps.check_translation_status.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }} \`
+
+            \`\`\`
+            ${process.env.RESULT}
+            \`\`\`
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.check_translation_status.outcome == 'failure'
+        run: exit 1
