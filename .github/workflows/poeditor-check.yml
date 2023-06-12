@@ -22,24 +22,28 @@ jobs:
         run: |
           RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --silent --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{ inputs.poeditor_project }}')
           RESULT=$(echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" || echo "All languages are fully translated")
-          echo "CHECK_RESULT=$RESULT" >> $GITHUB_OUTPUT
+          
+          # Handle newline issues
+          RESULT="${RESULT//'%'/'%25'}"
+          RESULT="${RESULT//$'\n'/'%0A'}"
+          RESULT="${RESULT//$'\r'/'%0D'}"
+        
+          echo "CHECK_RESULT=${RESULT}" >> $GITHUB_OUTPUT
           echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "Language {} is not fully translated" && exit 1 || echo "All languages are fully translated"
         continue-on-error: true
 
       - uses: actions/github-script@v6
         if: github.event_name == 'pull_request'
-        env:
-          RESULT: "${{ steps.check_translation_status.outputs.CHECK_RESULT }}"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }} \`
 
             \`\`\`
-            ${process.env.RESULT}
+            ${{ steps.check_translation_status.outputs.CHECK_RESULT }}
             \`\`\`
             
-            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            *Pushed by: @${{ github.actor }}*`;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
