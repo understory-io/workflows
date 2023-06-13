@@ -20,16 +20,13 @@ jobs:
       - name: Check translation percentage
         id: check_translation_status
         run: |
-          RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --silent --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{ inputs.poeditor_project }}')
-          RESULT=$(echo $RESP | jq '.result.languages[] | select(.percentage != 100) | .code' | xargs -I {} echo "{}" || echo "All languages are fully translated")
+          RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --silent --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=517bd604d0c41d8edca4ac69d17dcf85' --data-urlencode 'id=581619')
+          RESULT=$(echo $RESP | jq -r '.result.languages | map(select(.percentage < 100)) | map(.name) | join("|")')
           
-          # Handle newline issues
-          RESULT="${RESULT//$'\n'/'|'}"
           echo "CHECK_RESULT=${RESULT}" >> $GITHUB_OUTPUT
-          if [[ $RESULT == *"fully"* ]]; then
-            exit 0
+          if [[ $RESULT != "" ]]; then
+            exit 1
           fi
-          exit 1
         continue-on-error: true
 
       - uses: actions/github-script@v6
