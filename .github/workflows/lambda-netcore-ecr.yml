@@ -21,6 +21,8 @@ on:
         type: string
         required: true
     secrets:
+      myget_nuget_apikey:
+        required: false
       nuget_auth_token:
         required: false
       aws_access_key_id:
@@ -32,6 +34,7 @@ on:
 
     
 env:
+  MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
   DOTNET_VERSION: ${{ inputs.dotnet_version }}
   NUGET_AUTH_TOKEN: ${{ secrets.nuget_auth_token }}
 
