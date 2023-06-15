@@ -37,7 +37,7 @@ jobs:
             const input = "${{ steps.check_translation_status.outputs.CHECK_RESULT }}"
             const languages = input.split('|');
             let text = "";
-            if(input.includes('fully translated')) {
+            if(input == "") {
               text = `All languages are fully translated`;
             } else {
               text = `The following languages are not fully translated:`;
