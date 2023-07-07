@@ -53,6 +53,20 @@ jobs:
           path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
+      - name: Cache node modules
+        id: cache-npm
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-node-modules
+        with:
+          # npm cache files are stored in `~/.npm` on Linux/macOS
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
       - uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.hb_github_ssh_key }}
@@ -75,7 +89,7 @@ jobs:
           role-session-name: Github-Actions-Glue-Session
           role-duration-seconds: 3600
 
-      - name: Build & Deploy
+      - name: Build
         run: |
           cd ./checkout
           echo -e "@holdbar-com:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.hb_github_packages_read_only_token }}" > .npmrc
@@ -84,4 +98,13 @@ jobs:
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout
+
+      - name: Test
+        run: |
+          cd ./checkout
+          npm test
+
+      - name: Deploy
+        run: |
+          cd ./checkout
           node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ../glue/${{ inputs.stage }}/glue.json
