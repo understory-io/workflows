@@ -74,7 +74,7 @@ jobs:
       - name: Install & Setup node-aws-env
         run: |
           cd ./node-aws-env
-          npm install -g typescript eslint
+          npm install -g typescript eslint mocha
           npm install
           tsc
 
@@ -102,7 +102,7 @@ jobs:
       - name: Test
         run: |
           cd ./checkout
-          npm test
+          mocha
 
       - name: Deploy
         run: |
