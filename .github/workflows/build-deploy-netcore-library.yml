@@ -2,8 +2,6 @@ name: ".NET Core Library"
 on:
   workflow_call:
     secrets:
-      myget_nuget_apikey:
-        required: true
       nuget_auth_token:
         required: true
 
@@ -17,7 +15,6 @@ jobs:
       versionSuffix: alpha.${{ github.run_number }}
       nuget_username: ${{ github.actor }}
     secrets:
-      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
       nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
   build-and-push-beta:
@@ -28,7 +25,6 @@ jobs:
       versionSuffix: alpha.${{ github.run_number }}
       nuget_username: ${{ github.actor }}
     secrets:
-      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
       nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
   build-and-push-rc:
@@ -39,7 +35,6 @@ jobs:
       versionSuffix: rc.${{ github.run_number }}
       nuget_username: ${{ github.actor }}
     secrets:
-      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
       nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
   build-and-push-stable:
@@ -50,5 +45,4 @@ jobs:
       version: ${GITHUB_REF/refs\/tags\//}
       nuget_username: ${{ github.actor }}
     secrets:
-      myget_nuget_apikey: ${{ secrets.myget_nuget_apikey }}
       nuget_auth_token: ${{ secrets.nuget_auth_token }}

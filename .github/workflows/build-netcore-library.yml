@@ -18,13 +18,10 @@ on:
         type: string
         default: ''
     secrets:
-      myget_nuget_apikey:
-        required: true
       nuget_auth_token:
         required: true
 
 env:
-  MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
   NUGET_AUTH_TOKEN: ${{ secrets.nuget_auth_token }}
 
 jobs:
@@ -56,15 +53,11 @@ jobs:
 
       - name: Build and Pack
         if: inputs.versionSuffix != ''
-        env:
-          MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
           dotnet pack --configuration ${{ inputs.buildConfiguration }} --version-suffix=${{ inputs.versionSuffix }} --output=package/${{ inputs.buildConfiguration }} ${{ steps.project_data.outputs.project_name}}/${{ steps.project_data.outputs.project_name}}.csproj
         
       - name: Build and Pack (stable)
         if: inputs.version != ''
-        env:
-          MYGET_NUGET_APIKEY: ${{ secrets.myget_nuget_apikey }}
         run: |
           dotnet pack --configuration ${{ inputs.buildConfiguration }} --output=package/${{ inputs.buildConfiguration }} ${{ steps.project_data.outputs.project_name}}/${{ steps.project_data.outputs.project_name}}.csproj /p:Version=${{ inputs.version }}
       
