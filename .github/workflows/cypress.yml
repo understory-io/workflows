@@ -72,12 +72,12 @@ jobs:
     steps:
       - name: Add '${{inputs.test_domain}}' to /etc/hosts
         run: |
-            sudo echo "127.0.0.1 ${{inputs.test_domain}}" | sudo tee -a /etc/hosts
+            echo "127.0.0.1 ${{inputs.test_domain}}" | tee -a /etc/hosts
 
       - name: Setup local environment
         run: |
             echo "${{secrets.env_local}}" > .env.local
-            
+
       - name: Checkout repository
         uses: actions/checkout@v3
 
