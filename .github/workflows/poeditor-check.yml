@@ -10,8 +10,6 @@ on:
       poeditor_api_key:
         required: true
 
-
-
 jobs:
   build:
     name: "Check translations"

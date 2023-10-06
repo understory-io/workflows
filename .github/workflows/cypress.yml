@@ -1,0 +1,82 @@
+name: "Run all cypress-tests in a project"
+
+on:
+  workflow_call:
+    inputs:
+      config_file_path:
+        type: string
+        required: false
+        default: "cypress.config.ts"
+      test_url: 
+        type: string
+        required: false
+        default: "http://localhost:3005"
+      cypress_image:
+        type: string
+        required: false
+        default: "cypress/browsers:node18.12.0-chrome106-ff106"
+env:
+  CACHE_DIR: cache/
+
+jobs:
+  install:
+    name: Install
+    runs-on: ubuntu-latest
+    outputs:
+      cache_key: ${{ steps.cache-key.outputs.value }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Compute cache key
+        id: cache-key
+        run: echo "::set-output name=value::npm-$(sha256sum package-lock.json | awk '{print $1}')"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup cache
+        uses: actions/cache@v2
+        with:
+          path: ${{ env.CACHE_DIR }}
+          key: ${{ steps.cache-key.outputs.value }}
+          restore-keys: |
+            npm-
+
+  test:
+    name: E2E tests
+    needs: install
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs.cypress_image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Chrome
+            browser: chrome
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Read cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.CACHE_DIR }}
+          key: ${{ needs.install.outputs.cache_key }}
+
+      - name: Cypress test
+        uses: cypress-io/github-action@v4.2.0
+        with:
+          config-file: ${{inputs.config_file_path}}
+          build: npm run build
+          start: npm run dev
+          browser: ${{ matrix.browser }}
+          wait-on: '${{inputs.test_url}}'
