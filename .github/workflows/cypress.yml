@@ -7,10 +7,14 @@ on:
         type: string
         required: false
         default: "cypress.config.ts"
-      test_url: 
+      test_port:
         type: string
         required: false
-        default: "http://localhost:3005"
+        default: "3005"
+      test_domain:
+        type: string
+        required: false
+        default: "localhost"
       cypress_image:
         type: string
         required: false
@@ -63,6 +67,9 @@ jobs:
           - name: Chrome
             browser: chrome
     steps:
+      - name: Add '${{inputs.test_domain}}' to /etc/hosts
+        run: |
+            sudo echo "127.0.0.1 ${{inputs.test_domain}}" | sudo tee -a /etc/hosts
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -79,4 +86,4 @@ jobs:
           build: npm run build
           start: npm run dev
           browser: ${{ matrix.browser }}
-          wait-on: '${{inputs.test_url}}'
+          wait-on: 'http://${{inputs.test_domain}}:${{inputs.test_port}}'
