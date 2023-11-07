@@ -85,7 +85,6 @@ jobs:
       - name: Setup local environment
         run: |
             npm install --global vercel@latest
-            vercel env pull .env.local --token=${{ secrets.vercel_token }} --environment=preview
 
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -101,6 +100,6 @@ jobs:
         with:
           config-file: ${{inputs.config_file_path}}
           build: npm run build
-          start: npm run dev
+          start: vercel env pull .env.local --token=${{ secrets.vercel_token }} --environment=preview && npm run dev
           browser: ${{ matrix.browser }}
           wait-on: 'http://${{inputs.test_domain}}:${{inputs.test_port}}'
