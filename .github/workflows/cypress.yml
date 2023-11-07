@@ -100,8 +100,8 @@ jobs:
         uses: cypress-io/github-action@v6
         with:
           config-file: ${{inputs.config_file_path}}
+          config: baseUrl=http://${{inputs.test_domain}}:${{inputs.test_port}}
           build: npm run build
           start: npm run start
-          env: PORT=3005
           browser: ${{ matrix.browser }}
           wait-on: 'http://${{inputs.test_domain}}:${{inputs.test_port}}'
