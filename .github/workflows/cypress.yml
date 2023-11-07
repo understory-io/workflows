@@ -55,7 +55,7 @@ jobs:
           cache-dependency-path: '**/package-lock.json'
 
       - name: Install dependencies
-        run: npm ci && npm install --global vercel@latest
+        run: npm ci
 
       - name: Setup cache
         uses: actions/cache@v2
@@ -84,6 +84,7 @@ jobs:
 
       - name: Setup local environment
         run: |
+            npm install --global vercel@latest
             vercel env pull .env.local --token=${{ secrets.vercel_token }} --environment=preview
 
       - name: Checkout repository
