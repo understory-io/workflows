@@ -76,7 +76,7 @@ jobs:
 
       - name: Setup local environment
         run: |
-            echo "${{secrets.env_local}}" > .env.local
+            echo "${{secrets.env_local}}" > .env
 
       - name: Checkout repository
         uses: actions/checkout@v3
