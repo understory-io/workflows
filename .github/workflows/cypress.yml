@@ -101,7 +101,6 @@ jobs:
           config-file: ${{inputs.config_file_path}}
           build: vercel env pull --token=${{ secrets.vercel_token }} --environment=preview && npm run build
           start: npm run start
-          env:
-            PORT: 3005
+          env: PORT=3005
           browser: ${{ matrix.browser }}
           wait-on: 'http://${{inputs.test_domain}}:${{inputs.test_port}}'
