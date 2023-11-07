@@ -82,10 +82,6 @@ jobs:
         run: |
             echo "127.0.0.1 ${{inputs.test_domain}}" | tee -a /etc/hosts
 
-      - name: Setup local environment
-        run: |
-            npm install --global vercel@latest
-
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -95,11 +91,16 @@ jobs:
           path: ${{ env.CACHE_DIR }}
           key: ${{ needs.install.outputs.cache_key }}
 
+      - name: Setup local environment
+        run: |
+            npm install --global vercel@latest
+            vercel env pull --token=${{ secrets.vercel_token }} --environment=preview
+
       - name: Cypress test
         uses: cypress-io/github-action@v6
         with:
           config-file: ${{inputs.config_file_path}}
-          build: vercel env pull --token=${{ secrets.vercel_token }} --environment=preview && npm run build
+          build: npm run build
           start: npm run start
           env: PORT=3005
           browser: ${{ matrix.browser }}
