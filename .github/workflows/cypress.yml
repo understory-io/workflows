@@ -96,10 +96,12 @@ jobs:
           key: ${{ needs.install.outputs.cache_key }}
 
       - name: Cypress test
-        uses: cypress-io/github-action@v4.2.0
+        uses: cypress-io/github-action@v6
         with:
           config-file: ${{inputs.config_file_path}}
-          build: npm run build
-          start: vercel env pull --token=${{ secrets.vercel_token }} --environment=preview && npm run dev
+          build: vercel env pull --token=${{ secrets.vercel_token }} --environment=preview && npm run build
+          start: npm run start
+          env:
+            PORT: 3005
           browser: ${{ matrix.browser }}
           wait-on: 'http://${{inputs.test_domain}}:${{inputs.test_port}}'
