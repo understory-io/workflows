@@ -94,7 +94,7 @@ jobs:
       - name: Setup local environment
         run: |
             npm install --global vercel@latest
-            vercel env pull --token=${{ secrets.vercel_token }} --environment=preview
+            vercel env pull --token=${{ secrets.vercel_token }} --environment=development
 
       - name: Cypress test
         uses: cypress-io/github-action@v6
