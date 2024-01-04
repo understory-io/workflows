@@ -103,6 +103,7 @@ jobs:
       - name: Test
         run: |
           cd ./checkout
+          [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
           mocha
 
       - name: Deploy
