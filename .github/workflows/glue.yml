@@ -26,6 +26,7 @@ jobs:
   build:
     name: "Build & Deploy Service"
     runs-on: ubuntu-latest
+    environment: ${{ inputs.stage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
