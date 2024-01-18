@@ -9,6 +9,9 @@ on:
       image_tag_prefix:
         type: string
         required: true
+      artifacts_name:
+        type: string
+        required: true
     secrets:
       aws_access_key_id:
         required: true
@@ -32,6 +35,11 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Download a single artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifacts_name }}
 
       - name: Build Docker Image, tag, and push image to Amazon ECR
         env:
