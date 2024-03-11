@@ -8,7 +8,7 @@ on:
         required: true
       api_dir:
         type: string
-        default: "checkout"
+        default: ""
     secrets:
       aws_access_key_id:
         required: true
@@ -95,21 +95,21 @@ jobs:
 
       - name: Build
         run: |
-          cd ./${{ inputs.api_dir }}
+          cd ./checkout${{ inputs.api_dir }}
           echo -e "@holdbar-com:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.hb_github_packages_read_only_token }}" > .npmrc
           npm install
           tsc 
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js
-          node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/${{ inputs.api_dir }}
+          node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout${{ inputs.api_dir }}
 
       - name: Test
         run: |
-          cd ./${{ inputs.api_dir }}
+          cd ./checkout${{ inputs.api_dir }}
           [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
           mocha
 
       - name: Deploy
         run: |
-          cd ./${{ inputs.api_dir }}
+          cd ./checkout${{ inputs.api_dir }}
           node ../node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ../glue/${{ inputs.stage }}/glue.json
