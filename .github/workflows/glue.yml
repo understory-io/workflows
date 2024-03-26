@@ -104,6 +104,8 @@ jobs:
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout${{ inputs.api_dir }}
 
       - name: Test
+        env:
+          stage: ${{ inputs.stage }}
         run: |
           cd ./checkout${{ inputs.api_dir }}
           [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
