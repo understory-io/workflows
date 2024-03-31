@@ -106,10 +106,6 @@ jobs:
       - name: Test
         env:
           stage: ${{ inputs.stage }}
-          AWS_ACCESS_KEY_ID: ${{steps.aws.outputs.aws-access-key-id}}
-          AWS_SECRET_ACCESS_KEY: ${{steps.aws.outputs.aws-secret-access-key}}
-          AWS_SESSION_TOKEN: ${{steps.aws.outputs.aws-session-token}}
-          TEST: 1
         run: |
           cd ./checkout${{ inputs.api_dir }}
           [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
