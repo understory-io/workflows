@@ -109,7 +109,7 @@ jobs:
           node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout${{ inputs.api_dir }}
 
       - name: Test
-        if: ${{ inputs.stage }} != 'production'
+        if: ${{ inputs.stage != 'production' }}
         env:
           stage: ${{ inputs.stage }}
         run: |
