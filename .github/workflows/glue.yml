@@ -23,8 +23,6 @@ on:
       hb_github_packages_read_only_token:
         required: true
 
-
-
 jobs:
   build:
     name: "Build & Deploy Service"
@@ -34,7 +32,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: './checkout'
+          path: "./checkout"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,18 +40,17 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           node-version: 18
-          registry-url: 'https://npm.pkg.github.com'
-          cache: 'npm'
-          cache-dependency-path: './checkout${{ inputs.api_dir }}/package-lock.json'
-          scope: '@holdbar-com'
-          
+          registry-url: "https://npm.pkg.github.com"
+          cache: "npm"
+          cache-dependency-path: "./checkout${{ inputs.api_dir }}/package-lock.json"
+          scope: "@holdbar-com"
 
       - name: Checkout Glue
         uses: actions/checkout@v4
         with:
           repository: holdbar-com/glue
           ref: main
-          path: './glue'
+          path: "./glue"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Checkout node-aws-env
@@ -61,7 +58,7 @@ jobs:
         with:
           repository: holdbar-com/node-aws-env
           ref: v1.0.4
-          path: './node-aws-env'
+          path: "./node-aws-env"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - uses: webfactory/ssh-agent@v0.7.0
