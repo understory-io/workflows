@@ -37,33 +37,22 @@ jobs:
   install:
     name: Install
     runs-on: ubuntu-latest
-    outputs:
-      cache_key: ${{ steps.cache-key.outputs.value }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Compute cache key
-        id: cache-key
-        run: echo "value=npm-$(sha256sum package-lock.json | awk '{print $1}')" >> $GITHUB_OUTPUT
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@holdbar-com"
+          cache-dependency-path: "**/package-lock.json"
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Setup cache
-        uses: actions/cache@v2
-        with:
-          path: ${{ env.CACHE_DIR }}
-          key: ${{ steps.cache-key.outputs.value }}
-          restore-keys: |
-            npm-
 
   test:
     name: E2E tests
@@ -80,21 +69,15 @@ jobs:
     steps:
       - name: Add '${{inputs.test_domain}}' to /etc/hosts
         run: |
-            echo "127.0.0.1 ${{inputs.test_domain}}" | tee -a /etc/hosts
+          echo "127.0.0.1 ${{inputs.test_domain}}" | tee -a /etc/hosts
 
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Read cache
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.CACHE_DIR }}
-          key: ${{ needs.install.outputs.cache_key }}
-
       - name: Setup local environment
         run: |
-            npm install --global vercel@latest
-            vercel env pull --token=${{ secrets.vercel_token }} --environment=development
+          npm install --global vercel@latest
+          vercel env pull --token=${{ secrets.vercel_token }} --environment=development
 
       - name: Cypress test
         uses: cypress-io/github-action@v6
@@ -104,4 +87,4 @@ jobs:
           build: npm run build
           start: npm run start
           browser: ${{ matrix.browser }}
-          wait-on: 'http://${{inputs.test_domain}}:${{inputs.test_port}}'
+          wait-on: "http://${{inputs.test_domain}}:${{inputs.test_port}}"
