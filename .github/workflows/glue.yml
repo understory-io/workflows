@@ -97,6 +97,7 @@ jobs:
         if: ${{ inputs.stage != 'production' }}
         env:
           stage: ${{ inputs.stage }}
+          CI: true
         run: |
           cd ./checkout${{ inputs.api_dir }}
           [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
