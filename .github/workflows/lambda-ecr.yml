@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_repo: ${{ inputs.ecr_repository_name }}
-      image_tag: ${{ inputs.image_tag_prefix }}${{ github.run_number }}
+      image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
