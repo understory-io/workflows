@@ -36,7 +36,7 @@ jobs:
             IMAGE_TAG="stage-"
           elif [ "$GITHUB_REF_NAME" = "hotfix/"* ]; then
             IMAGE_TAG="stage-"
-          elfi [ "$WORKFLOW_TRIGGER" = "pull_request" ]; then
+          elif [ "$WORKFLOW_TRIGGER" = "pull_request" ]; then
             IMAGE_TAG="stage-"
           else
             IMAGE_TAG="dev-"
