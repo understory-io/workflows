@@ -28,7 +28,8 @@ jobs:
     name: 'Build & Push Image'
     runs-on: ubuntu-latest
     outputs:
-      image_uri: ${{ steps.push-image.outputs.image_uri }}
+      image_uri: ${{ steps.push_image.outputs.image_uri }}
+      ecr_registry: ${{ steps.push_image.outputs.ecr_registry }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -47,7 +48,7 @@ jobs:
           name: ${{ inputs.artifacts_name }}
 
       - name: Build Docker Image, tag, and push image to Amazon ECR
-        id: push-image
+        id: push_image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ inputs.ecr_repository_name }}
@@ -60,6 +61,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
 
           echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER" >> $GITHUB_OUTPUT
+          echo "ecr_registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
 
   trigger-deploy:
     if: inputs.aws_function_name != ''
@@ -77,4 +79,6 @@ jobs:
           role-duration-seconds: 900
       - name: Update lambda image uri
         run: |
+          echo "image_uri: ${{ needs.build.outputs.image_uri }}"
+          echo "ecr_registry: ${{ needs.build.outputs.ecr_registry }}"
           aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ needs.build.outputs.image_uri }}
