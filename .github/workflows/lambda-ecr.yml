@@ -28,7 +28,7 @@ jobs:
     name: 'Build & Push Image'
     runs-on: ubuntu-latest
     outputs:
-      image-uri: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
+      image-uri: '${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
