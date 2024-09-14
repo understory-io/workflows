@@ -28,7 +28,7 @@ jobs:
     name: 'Build & Push Image'
     runs-on: ubuntu-latest
     outputs:
-      image_repo_tag: ${{ inputs.ecr_repository_name }}/${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
+      image_repo_tag: ${{ inputs.ecr_repository_name }}/${{ inputs.image_tag_prefix }}${{ github.run_number }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -56,8 +56,8 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA
 
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}${{ github.run_number }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}${{ github.run_number }}
 
   trigger-deploy:
     if: inputs.aws_function_name != ''
