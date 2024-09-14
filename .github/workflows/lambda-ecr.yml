@@ -28,8 +28,7 @@ jobs:
     name: 'Build & Push Image'
     runs-on: ubuntu-latest
     outputs:
-      image_uri: ${{ steps.push_image.outputs.image_uri }}
-      ecr_registry: ${{ steps.push_image.outputs.ecr_registry }}
+      image_repo_tag: ${{ inputs.ecr_repository_name }}/${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -60,9 +59,6 @@ jobs:
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
 
-          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER" >> $GITHUB_OUTPUT
-          echo "ecr_registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
-
   trigger-deploy:
     if: inputs.aws_function_name != ''
     needs: [build]
@@ -75,10 +71,23 @@ jobs:
           aws-access-key-id: ${{ secrets.aws_access_key_id }}
           aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
           aws-region: ${{ secrets.aws_region }}
+
+      # Needed here because it's a secret value so cannot be passed as an output from the build job
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
           role-to-assume: arn:aws:iam::115578597962:role/ContinuousDeliveryRole
           role-duration-seconds: 900
+
       - name: Update lambda image uri
+        env:
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo_tag }}
         run: |
-          echo "image_uri: ${{ needs.build.outputs.image_uri }}"
-          echo "ecr_registry: ${{ needs.build.outputs.ecr_registry }}"
-          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ needs.build.outputs.image_uri }}
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri $IMAGE_URI
