@@ -24,10 +24,6 @@ jobs:
           WORKFLOW_TRIGGER: ${{ github.event_name }}
         run: |
 
-          echo "workflow trigger $WORKFLOW_TRIGGER"
-          echo "event_name ${{ github.event_name}} ""
-          echo "event action ${{ github.event.action}} ""
-
           if [ "$GITHUB_REF_NAME" = "main" ]; then
             IMAGE_TAG="prod-"
           elif [ "$GITHUB_REF_NAME" = "master" ]; then
