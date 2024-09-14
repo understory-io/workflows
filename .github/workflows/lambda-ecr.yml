@@ -73,7 +73,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
           aws-region: ${{ secrets.aws_region }}
           role-to-assume: arn:aws:iam::115578597962:role/ContinuousDeliveryRole
-          role-duration-seconds: 120
+          role-duration-seconds: 900
       - name: Update lambda image uri
         run: |
           aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ needs.build.outputs.IMAGE_URI }} --profile holdbar-dev
