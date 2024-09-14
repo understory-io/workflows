@@ -76,4 +76,4 @@ jobs:
           role-duration-seconds: 900
       - name: Update lambda image uri
         run: |
-          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ needs.build.outputs.IMAGE_URI }} --profile holdbar-dev
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ needs.build.outputs.IMAGE_URI }}
