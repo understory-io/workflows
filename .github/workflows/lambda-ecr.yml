@@ -1,4 +1,4 @@
-name: "Build & Push Image"
+name: 'Build & Push Image'
 
 on:
   workflow_call:
@@ -6,6 +6,9 @@ on:
       ecr_repository_name:
         type: string
         required: true
+      aws_function_name:
+        type: string
+        required: false
       image_tag_prefix:
         type: string
         required: true
@@ -22,8 +25,12 @@ on:
 
 jobs:
   build:
-    name: "Build & Push Image"
+    name: 'Build & Push Image'
     runs-on: ubuntu-latest
+    env:
+      IMAGE_URI: $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
+    outputs:
+      IMAGE_URI: ${{env.IMAGE_URI}}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -46,9 +53,27 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ inputs.ecr_repository_name }}
         run: |
-          
+
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA
-          
+
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
+
+  trigger-deploy:
+    if: inputs.aws_function_name != ''
+    needs: [build]
+    name: 'Trigger Deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+          role-to-assume: arn:aws:iam::115578597962:role/ContinuousDeliveryRole
+          role-duration-seconds: 120
+      - name: Update lambda image uri
+        run: |
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ needs.build.outputs.IMAGE_URI }} --profile holdbar-dev
