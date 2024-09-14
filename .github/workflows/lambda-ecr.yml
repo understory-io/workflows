@@ -28,7 +28,8 @@ jobs:
     name: 'Build & Push Image'
     runs-on: ubuntu-latest
     outputs:
-      image_repo_tag: ${{ inputs.ecr_repository_name }}/${{ inputs.image_tag_prefix }}${{ github.run_number }}
+      image_repo: ${{ inputs.ecr_repository_name }}
+      image_tag: ${{ inputs.image_tag_prefix }}${{ github.run_number }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -87,7 +88,5 @@ jobs:
           role-duration-seconds: 900
 
       - name: Update lambda image uri
-        env:
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo_tag }}
         run: |
-          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri $IMAGE_URI
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo }}:${{ needs.build.outputs.image_tag }}
