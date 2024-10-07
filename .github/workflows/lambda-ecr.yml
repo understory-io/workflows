@@ -1,4 +1,4 @@
-name: "Build & Push Image"
+name: 'Build & Push Image'
 
 on:
   workflow_call:
@@ -6,6 +6,9 @@ on:
       ecr_repository_name:
         type: string
         required: true
+      aws_function_name:
+        type: string
+        required: false
       image_tag_prefix:
         type: string
         required: true
@@ -22,8 +25,11 @@ on:
 
 jobs:
   build:
-    name: "Build & Push Image"
+    name: 'Build & Push Image'
     runs-on: ubuntu-latest
+    outputs:
+      image_repo: ${{ inputs.ecr_repository_name }}
+      image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -42,13 +48,64 @@ jobs:
           name: ${{ inputs.artifacts_name }}
 
       - name: Build Docker Image, tag, and push image to Amazon ECR
+        id: push_image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ inputs.ecr_repository_name }}
         run: |
-          
+
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}${{ github.run_number }}
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}latest
+
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA
-          
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}$GITHUB_RUN_NUMBER
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}${{ github.run_number }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}latest
+
+  trigger-deploy:
+    if: inputs.aws_function_name != ''
+    needs: [build]
+    name: 'Trigger Deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+
+      # Needed here because it's a secret value so cannot be passed as an output from the build job
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Setup aws role arn
+        id: setup-aws-role-arn
+        env:
+          IMAGE_TAG_PREFIX: ${{ inputs.image_tag_prefix }}
+        run: |
+          if [ "$IMAGE_TAG_PREFIX" = "prod-" ]; then
+            ROLE_ARN="arn:aws:iam::189949407637:role/ContinuousDeliveryRole"
+          elif [ "$IMAGE_TAG_PREFIX" = "stage-" ]; then
+            ROLE_ARN="arn:aws:iam::446474216075:role/ContinuousDeliveryRole"
+          else
+            ROLE_ARN="arn:aws:iam::115578597962:role/ContinuousDeliveryRole"
+          fi
+
+          echo "ROLE_TO_ASSUME=$ROLE_ARN" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        env:
+          ROLE_TO_ASSUME: ${{ env.ROLE_TO_ASSUME }}
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          role-duration-seconds: 900
+
+      - name: Update lambda image uri
+        run: |
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo }}:${{ needs.build.outputs.image_tag }}
