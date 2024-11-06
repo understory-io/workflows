@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: holdbar-com/node-aws-env
-          ref: v1.0.5
+          ref: v2.0.0
           path: "./node-aws-env"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
