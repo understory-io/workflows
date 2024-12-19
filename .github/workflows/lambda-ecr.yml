@@ -106,6 +106,18 @@ jobs:
           role-to-assume: ${{ env.ROLE_TO_ASSUME }}
           role-duration-seconds: 900
 
+      - name: Check if lambda function exists
+        id: check_lambda
+        run: |
+          if aws lambda get-function --function-name ${{ inputs.aws_function_name }} > /dev/null 2>&1; then
+            echo "LAMBDA_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "LAMBDA_EXISTS=false" >> $GITHUB_ENV
+          fi
+
       - name: Update lambda image uri
+        env:
+          LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
+        if: env.LAMBDA_EXISTS == 'true'
         run: |
           aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo }}:${{ needs.build.outputs.image_tag }}
