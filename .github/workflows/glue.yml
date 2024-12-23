@@ -34,6 +34,33 @@ jobs:
         with:
           path: "./checkout"
 
+      - name: Checkout Glue
+        uses: actions/checkout@v4
+        with:
+          repository: understory-io/glue
+          ref: main
+          path: "./glue"
+          ssh-key: ${{ secrets.hb_github_ssh_key }}
+
+      - name: Checkout node-aws-env
+        uses: actions/checkout@v4
+        with:
+          repository: understory-io/node-aws-env
+          ref: v2.0.2
+          path: "./node-aws-env"
+          ssh-key: ${{ secrets.hb_github_ssh_key }}
+
+      - name: Restore node-aws-env cache
+        id: restore-node-aws-env-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: "./node-aws-env"
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env
+
+      - uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.hb_github_ssh_key }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         env:
@@ -42,35 +69,24 @@ jobs:
           node-version: 18
           registry-url: "https://npm.pkg.github.com"
           cache: "npm"
-          cache-dependency-path: "./checkout${{ inputs.api_dir }}/package-lock.json"
-          scope: "@holdbar-com"
-
-      - name: Checkout Glue
-        uses: actions/checkout@v4
-        with:
-          repository: holdbar-com/glue
-          ref: main
-          path: "./glue"
-          ssh-key: ${{ secrets.hb_github_ssh_key }}
-
-      - name: Checkout node-aws-env
-        uses: actions/checkout@v4
-        with:
-          repository: holdbar-com/node-aws-env
-          ref: v2.0.0
-          path: "./node-aws-env"
-          ssh-key: ${{ secrets.hb_github_ssh_key }}
-
-      - uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.hb_github_ssh_key }}
+          cache-dependency-path: "**/package-lock.json"
+          scope: "@understory-io"
 
       - name: Install & Setup node-aws-env
+        if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
         run: |
           cd ./node-aws-env
           npm install -g typescript@5.4.5 eslint@8.57.0 mocha@10.4.0
           npm install
           tsc
+
+      - name: Save node-aws-env cache
+        if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
+        id: save-node-aws-env-cache
+        uses: actions/cache/save@v4
+        with:
+          path: "./node-aws-env"
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env
 
       - name: Configure AWS credentials
         id: aws
@@ -83,11 +99,15 @@ jobs:
           role-session-name: Github-Actions-Glue-Session
           role-duration-seconds: 3600
 
+      - name: Install project dependencies
+        run: |
+          cd ./checkout${{ inputs.api_dir }}
+          npm install -g typescript@5.4.5 eslint@8.57.0 mocha@10.4.0
+          npm install
+
       - name: Build
         run: |
           cd ./checkout${{ inputs.api_dir }}
-          echo -e "@holdbar-com:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.hb_github_packages_read_only_token }}" > .npmrc
-          npm install
           tsc 
           eslint
           node ./node_modules/@riddance/env/bin/prepare.js

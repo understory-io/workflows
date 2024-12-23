@@ -48,7 +48,7 @@ jobs:
         with:
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
-          scope: "@holdbar-com"
+          scope: "@understory-io"
           cache-dependency-path: "**/package-lock.json"
 
       - name: Install dependencies
@@ -81,7 +81,7 @@ jobs:
         with:
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
-          scope: "@holdbar-com"
+          scope: "@understory-io"
           cache-dependency-path: "**/package-lock.json"
 
       - name: Setup local environment
