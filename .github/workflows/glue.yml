@@ -81,6 +81,7 @@ jobs:
           tsc
 
       - name: Save node-aws-env cache
+        if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
         id: save-node-aws-env-cache
         uses: actions/cache/save@v4
         with:
