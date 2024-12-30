@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: understory-io/node-aws-env
-          ref: 5bcc3af1b357b49d80bdac486e62e6a3a1a80f45
+          ref: v2.0.3
           path: "./node-aws-env"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
