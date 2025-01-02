@@ -9,6 +9,9 @@ on:
       api_dir:
         type: string
         default: ""
+      node_aws_env_ref:
+        type: string
+        default: "v2.0.4"
     secrets:
       aws_access_key_id:
         required: true
@@ -46,7 +49,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: understory-io/node-aws-env
-          ref: v2.0.4
+          ref: ${{ inputs.node_aws_env_ref }}
           path: "./node-aws-env"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
