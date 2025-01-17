@@ -1,0 +1,86 @@
+name: Publish packages
+
+on:
+  workflow_call:
+    secrets:
+      slack-webhook:
+        required: true
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  publish-packages:
+    name: Publish packages
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install Dependencies
+        run: npm i
+
+      - name: Create Release Pull Request or Publish to Github Packages
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          # This expects you to have a script called release which does a build for your packages and calls changeset publish
+          publish: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract release notes
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          releasesNotes=""
+
+          while IFS= read -r package; do
+            # Construct tag from package name and version
+            tag=$(echo "$package" | jq -r '.name + "@" + .version')
+            notes=$(gh release view "$tag" --json body -q '.body' || echo "No release notes available for $tag")
+
+            # Convert GitHub-style markdown to Slack markdown for proper links
+            formattedNotes=$(echo "$notes" | sed -E 's/\[([^]]+)\]\(([^)]+)\)/<\2|\1>/g')
+
+            # Append the formatted notes to the releasesNotes
+            releasesNotes="${releasesNotes}\n*$tag*:\n\n${formattedNotes}\n\n"
+          done < <(echo '${{ steps.changesets.outputs.publishedPackages }}' | jq -c '.[]')
+
+          # Use the multiline syntax to export RELEASES_NOTES
+          echo "RELEASES_NOTES<<EOF" >> $GITHUB_ENV
+          echo -e "$releasesNotes" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Notify Slack
+        if: steps.changesets.outputs.published == 'true'
+        uses: slackapi/slack-github-action@v2.0.0
+        env:
+          RELEASES_NOTES: ${{ env.RELEASES_NOTES }}
+        with:
+          webhook: ${{ secrets.slack-webhook }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*${{ github.event.repository.name }}:* New packages released\n\n${{ env.RELEASES_NOTES }}"
+                  }
+                }
+              ]
+            }
