@@ -2,6 +2,11 @@ name: Publish packages
 
 on:
   workflow_call:
+    inputs:
+      releases-name:
+        type: string
+        description: 'Name shown in slack message. Defaults to repository name'
+        default: ${{ github.event.repository.name }}
     secrets:
       slack-webhook:
         required: true
@@ -79,7 +84,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*${{ github.event.repository.name }}:* New packages released\n\n${{ env.RELEASES_NOTES }}"
+                    "text": "*${{ inputs.releases-name }}:* New packages released\n\n${{ env.RELEASES_NOTES }}"
                   }
                 }
               ]
