@@ -1,0 +1,43 @@
+name: Update release PRs
+on:
+  workflow_call:
+    secrets:
+      token:
+        required: true
+
+jobs:
+  release-prs:
+    runs-on: ubuntu-latest
+    name: Update release PRs
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Detect target branch
+        id: detect-target-branch
+        run: echo "TARGET_BRANCH=$([[ '${{ github.ref_name }}' == 'dev' ]] && echo 'stage' || ([[ '${{ github.ref_name }}' == 'stage' ]] && echo 'prod' || echo 'unknown'))" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+
+      - name: Reset ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }} promotion branch
+        run: |
+          git fetch origin ${{ github.ref_name }}:${{ github.ref_name }}
+          git reset --hard ${{ github.ref_name }}
+
+      - name: Create Pull Request
+        id: create-pull-request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.PAT }}
+          branch: release/auto-${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          commit-message: |
+            Merge ${{ github.ref_name }} into ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          title: "Release ${{ github.ref_name }} to ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}"
+          body: |
+            Automated PR for releasing changes from ${{ github.ref_name }} into ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          maintainer-can-modify: false
+          delete-branch: true
