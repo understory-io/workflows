@@ -32,7 +32,7 @@ jobs:
         id: create-pull-request
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.PAT }}
+          token: ${{ secrets.TOKEN }}
           branch: release/auto-${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
           commit-message: |
             Merge ${{ github.ref_name }} into ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
