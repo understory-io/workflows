@@ -1,6 +1,11 @@
 name: Update release PRs
 on:
   workflow_call:
+    inputs:
+      promotionPairs:
+        type: string
+        required: true
+        description: "Comma-separated list of key-value promotion pairs to create PRs for, e.g. 'dev=stage,stage=prod'"
     secrets:
       token:
         required: true
@@ -17,7 +22,28 @@ jobs:
     steps:
       - name: Detect target branch
         id: detect-target-branch
-        run: echo "TARGET_BRANCH=$([[ '${{ github.ref_name }}' == 'dev' ]] && echo 'stage' || ([[ '${{ github.ref_name }}' == 'stage' ]] && echo 'prod' || echo 'unknown'))" >> $GITHUB_OUTPUT
+        run: |
+          IFS=',' read -r -a pairs <<< '${{ inputs.promotionPairs}}'
+
+          target_branch="unknown"
+
+          # expand the configuration variable. It contains comma separated key-value pairs
+          # for <origin_branch>=<target_branch> mappings.
+          for pair in "${pairs[@]}"; do
+              key="${pair%%=*}"
+              value="${pair##*=}"
+              if [[ '${{ github.ref_name }}' == "$key" ]]; then
+                  target_branch="$value"
+                  break
+              fi
+          done
+
+          if [[ "$target_branch" == "unknown" ]]; then
+              echo "Target branch is unknown. Check the branch configuration."
+              exit 1
+          fi
+
+          echo "TARGET_BRANCH=$target_branch" >> $GITHUB_OUTPUT
 
       - uses: actions/checkout@v4
         with:
