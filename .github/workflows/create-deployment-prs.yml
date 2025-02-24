@@ -1,0 +1,69 @@
+name: Update release PRs
+on:
+  workflow_call:
+    inputs:
+      promotionPairs:
+        type: string
+        required: true
+        description: "Comma-separated list of key-value promotion pairs to create PRs for, e.g. 'dev=stage,stage=prod'"
+    secrets:
+      token:
+        required: true
+
+jobs:
+  release-prs:
+    runs-on: ubuntu-latest
+    name: Update release PRs
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Detect target branch
+        id: detect-target-branch
+        run: |
+          IFS=',' read -r -a pairs <<< '${{ inputs.promotionPairs}}'
+
+          target_branch="unknown"
+
+          # expand the configuration variable. It contains comma separated key-value pairs
+          # for <origin_branch>=<target_branch> mappings.
+          for pair in "${pairs[@]}"; do
+              key="${pair%%=*}"
+              value="${pair##*=}"
+              if [[ '${{ github.ref_name }}' == "$key" ]]; then
+                  target_branch="$value"
+                  break
+              fi
+          done
+
+          if [[ "$target_branch" == "unknown" ]]; then
+              echo "Target branch is unknown. Check the branch configuration."
+              exit 1
+          fi
+
+          echo "TARGET_BRANCH=$target_branch" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+
+      - name: Reset ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }} promotion branch
+        run: |
+          git fetch origin ${{ github.ref_name }}:${{ github.ref_name }}
+          git reset --hard ${{ github.ref_name }}
+
+      - name: Create Pull Request
+        id: create-pull-request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.TOKEN }}
+          branch: release/auto-${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          commit-message: |
+            Merge ${{ github.ref_name }} into ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          title: "Release ${{ github.ref_name }} to ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}"
+          body: |
+            Automated PR for releasing changes from ${{ github.ref_name }} into ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          maintainer-can-modify: false
+          delete-branch: true
