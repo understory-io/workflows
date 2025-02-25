@@ -1,12 +1,29 @@
-name: Publish packages
-
 on:
   workflow_call:
     inputs:
+      publish-command:
+        type: string
+        required: true
+
       releases-name:
         type: string
         description: 'Name shown in slack message. Defaults to repository name'
         default: ${{ github.event.repository.name }}
+      releases-name-subtitle:
+        type: string
+        description: 'Appended after release name'
+        default: New packages released
+      mono-repo:
+        type: boolean
+        description: 'Whether the repository is a mono-repo or not'
+      commit-message:
+        type: string
+        description: 'The commit message to use. Default to Version Packages'
+        default: Version Packages
+      pull-request-title:
+        type: string
+        description: 'Default to Version Packages'
+        default: Version Packages
     secrets:
       slack-webhook:
         required: true
@@ -14,8 +31,8 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  publish-packages:
-    name: Publish packages
+  changeset-releases:
+    name: Changeset Releases
     permissions:
       contents: write
       packages: write
@@ -36,12 +53,14 @@ jobs:
       - name: Install Dependencies
         run: npm i
 
-      - name: Create Release Pull Request or Publish to Github Packages
+      - name: Create Release Pull Request or publish changesets
         id: changesets
         uses: changesets/action@v1
         with:
           # This expects you to have a script called release which does a build for your packages and calls changeset publish
-          publish: npm run release
+          publish: ${{ inputs.publish-command }}
+          commit: ${{ inputs.commit-message }}
+          title: ${{ inputs.pull-request-title }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,7 +75,14 @@ jobs:
 
           while IFS= read -r package; do
             # Construct tag from package name and version
-            tag=$(echo "$package" | jq -r '.name + "@" + .version')
+            # https://github.com/changesets/changesets/blob/main/docs/command-line-options.md#tag
+
+            if [ "${{ inputs.mono-repo }}" = "true" ]; then
+              tag=$(echo "$package" | jq -r '.name + "@" + .version')
+            else
+              tag=$(echo "$package" | jq -r '"v" + .version')
+            fi
+
             notes=$(gh release view "$tag" --json body -q '.body' || echo "No release notes available for $tag")
 
             # Convert GitHub-style markdown to Slack markdown for proper links
@@ -86,7 +112,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*${{ inputs.releases-name }}:* New packages released\n\n${{ env.RELEASES_NOTES }}"
+                    "text": "*${{ inputs.releases-name }}:* ${{ inputs.releases-name-subtitle }}\n\n${{ env.RELEASES_NOTES }}"
                   }
                 }
               ]
