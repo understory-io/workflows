@@ -7,28 +7,28 @@ on:
 
       releases-name:
         type: string
-        description: 'Name shown in slack message. Defaults to repository name'
+        description: "Name shown in slack message. Defaults to repository name"
         default: ${{ github.event.repository.name }}
       releases-name-subtitle:
         type: string
-        description: 'Appended after release name'
+        description: "Appended after release name"
         default: New packages released
       mono-repo:
         type: boolean
-        description: 'Whether the repository is a mono-repo or not'
+        description: "Whether the repository is a mono-repo or not"
       commit-message:
         type: string
-        description: 'The commit message to use. Default to Version Packages'
+        description: "The commit message to use. Default to Version Packages"
         default: Version Packages
       pull-request-title:
         type: string
-        description: 'Default to Version Packages'
+        description: "Default to Version Packages"
         default: Version Packages
     secrets:
       slack-webhook:
         required: true
       github_ssh_key:
-        description: 'SSH key to use for git operations like referencing packages referenced by git urls'
+        description: "SSH key to use for git operations like referencing packages referenced by git urls"
         required: false
       changeset-github-token:
         required: true
@@ -55,7 +55,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           node-version: 22.x
-          registry-url: 'https://npm.pkg.github.com'
+          registry-url: "https://npm.pkg.github.com"
 
       - name: Setup SSH Agent
         env:
@@ -109,8 +109,12 @@ jobs:
             # Convert GitHub-style markdown to Slack markdown for proper links
             formattedNotes=$(echo "$notes" | sed -E 's/\[([^]]+)\]\(([^)]+)\)/<\2|\1>/g')
 
+            # jq adds quotes around the final string when using --raw-output and
+            # --ascii-output. We remove them again with sed.
+            escapedNotes=$(echo "$formattedNotes" | jq --raw-output --raw-input --slurp --ascii-output | sed -e 's/^"//' -e 's/"$//')
+
             # Append the formatted notes to the releasesNotes
-            releasesNotes="${releasesNotes}\n*$tag*:\n\n${formattedNotes}\n\n"
+            releasesNotes="${releasesNotes}\n*$tag*:\n\n${escapedNotes}\n\n"
           done < <(echo '${{ steps.changesets.outputs.publishedPackages }}' | jq -c '.[]')
 
           # Use the multiline syntax to export RELEASES_NOTES
