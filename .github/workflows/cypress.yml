@@ -72,7 +72,7 @@ jobs:
           echo "127.0.0.1 ${{inputs.test_domain}}" | tee -a /etc/hosts
 
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
