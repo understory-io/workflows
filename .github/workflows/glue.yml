@@ -60,7 +60,7 @@ jobs:
           path: "./node-aws-env"
           key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
 
-      - uses: webfactory/ssh-agent@v0.7.0
+      - uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.hb_github_ssh_key }}
 
