@@ -76,7 +76,7 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker Image, tag, and push image to Amazon ECR
         env:
@@ -108,7 +108,7 @@ jobs:
       # Needed here because it's a secret value so cannot be passed as an output from the build job
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Setup aws role arn
         id: setup-aws-role-arn
