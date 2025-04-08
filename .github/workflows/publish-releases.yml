@@ -43,6 +43,8 @@ jobs:
       packages: write
       pull-requests: write
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
