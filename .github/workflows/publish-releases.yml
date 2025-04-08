@@ -148,7 +148,3 @@ jobs:
                 }
               ]
             }
-
-      - name: Debugging job output
-        run: |
-          echo "${{ steps.changesets.outputs.published }}"
