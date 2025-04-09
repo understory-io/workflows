@@ -32,6 +32,10 @@ on:
         required: false
       changeset-github-token:
         required: true
+    outputs:
+      published:
+        description: "Whether a new release was published or not"
+        value: ${{ jobs.changeset-releases.outputs.published }}
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -43,6 +47,8 @@ jobs:
       packages: write
       pull-requests: write
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
