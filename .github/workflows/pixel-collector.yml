@@ -15,19 +15,10 @@ on:
     secrets:
       PIXEL_COLLECTOR_API_KEY:
         required: true
-env:
-  NODE_AUTH_TOKEN: ${{ secrets.HB_PACKAGES_READ_ONLY_TOKEN }}
-
 jobs:
   collect-usage:
     runs-on: ubuntu-latest
     steps:
-      - name: API key exists
-        run: |
-          echo "Secret length: ${#PIXEL_API_KEY}"
-        env:
-          PIXEL_API_KEY: ${{ secrets.PIXEL_COLLECTOR_API_KEY }}
-
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
       - name: Scan for package imports
