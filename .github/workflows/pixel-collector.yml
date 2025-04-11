@@ -1,0 +1,48 @@
+name: 'Collect components usage'
+
+on:
+  workflow_call:
+    inputs:
+      src_dir:
+        type: string
+        required: true
+      app_name:
+        type: string
+        required: true
+      package_name:
+        type: string
+        required: true
+    secrets:
+      PIXEL_COLLECTOR_API_KEY:
+        required: true
+env:
+  NODE_AUTH_TOKEN: ${{ secrets.HB_PACKAGES_READ_ONLY_TOKEN }}
+
+jobs:
+  collect-usage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: API key exists
+        run: |
+          echo "Secret length: ${#PIXEL_API_KEY}"
+        env:
+          PIXEL_API_KEY: ${{ secrets.PIXEL_COLLECTOR_API_KEY }}
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - name: Scan for package imports
+        id: scan
+        run: |
+          output=$(npx --yes scan-imports@v1.1.2 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_name }} -ext .tsx,.ts -f json)
+          filename=$(echo "$output" | sed -n 's/^Outputting .* to \(.*\.json\)$/\1/p')
+          echo "filename=$filename" >> $GITHUB_OUTPUT
+
+      - name: POST collected metrics to API
+        run: |
+          escaped_package_name="${{ inputs.package_name }}"
+          escaped_package_name="${escaped_package_name//\//__}"
+          curl -X POST "https://api.app.dev.understory.io/v1/pixel/collector/${{ inputs.app_name }}/${escaped_package_name}" \
+            -H "Content-Type: application/json" \
+            -H "api-key: ${{secrets.PIXEL_COLLECTOR_API_KEY}}" \
+            -H "x-company-id: understory-io" \
+            --data @"${{ steps.scan.outputs.filename }}"
