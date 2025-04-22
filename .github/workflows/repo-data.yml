@@ -1,18 +1,18 @@
-name: 'Extract Repository Data'
+name: "Extract Repository Data"
 
 on:
   workflow_call:
     outputs:
       repository_name:
-        description: 'Base repository name, without organization'
+        description: "Base repository name, without organization"
         value: ${{ jobs.extract-data.outputs.repository_name }}
       image_tag_prefix:
-        description: Determined based on the branch name. Is either `prod-`, `stage-` or `dev-`"
+        description: Determined based on the branch name. Is either `prod-` or `dev-`"
         value: ${{ jobs.extract-data.outputs.image_tag_prefix }}
 
 jobs:
   extract-data:
-    name: 'Data Setup'
+    name: "Data Setup"
     runs-on: ubuntu-latest
     outputs:
       repository_name: ${{ steps.set_data.outputs.repo_name }}
@@ -28,12 +28,6 @@ jobs:
             IMAGE_TAG="prod-"
           elif [ "$GITHUB_REF_NAME" = "master" ]; then
             IMAGE_TAG="prod-"
-          elif [ "$GITHUB_REF_NAME" = "release/"* ]; then
-            IMAGE_TAG="stage-"
-          elif [ "$GITHUB_REF_NAME" = "hotfix/"* ]; then
-            IMAGE_TAG="stage-"
-          elif [ "$WORKFLOW_TRIGGER" = "pull_request" ]; then
-            IMAGE_TAG="stage-"
           else
             IMAGE_TAG="dev-"
           fi

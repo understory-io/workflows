@@ -5,7 +5,7 @@ on:
       promotionPairs:
         type: string
         required: true
-        description: "Comma-separated list of key-value promotion pairs to create PRs for, e.g. 'dev=stage,stage=prod'"
+        description: "Comma-separated list of key-value promotion pairs to create PRs for, e.g. 'dev=prod'"
     secrets:
       token:
         required: true
