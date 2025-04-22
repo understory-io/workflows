@@ -1,4 +1,4 @@
-name: 'Build & Push Image'
+name: "Build & Push Image"
 
 on:
   workflow_call:
@@ -25,7 +25,7 @@ on:
 
 jobs:
   build:
-    name: 'Build & Push Image'
+    name: "Build & Push Image"
     runs-on: ubuntu-latest
     outputs:
       image_repo: ${{ inputs.ecr_repository_name }}
@@ -65,7 +65,7 @@ jobs:
   trigger-deploy:
     if: inputs.aws_function_name != ''
     needs: [build]
-    name: 'Trigger Deploy'
+    name: "Trigger Deploy"
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS credentials
@@ -87,8 +87,6 @@ jobs:
         run: |
           if [ "$IMAGE_TAG_PREFIX" = "prod-" ]; then
             ROLE_ARN="arn:aws:iam::189949407637:role/ContinuousDeliveryRole"
-          elif [ "$IMAGE_TAG_PREFIX" = "stage-" ]; then
-            ROLE_ARN="arn:aws:iam::446474216075:role/ContinuousDeliveryRole"
           else
             ROLE_ARN="arn:aws:iam::115578597962:role/ContinuousDeliveryRole"
           fi
