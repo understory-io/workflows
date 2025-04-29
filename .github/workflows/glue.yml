@@ -53,13 +53,6 @@ jobs:
           path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
-      - name: Restore node-aws-env cache
-        id: restore-node-aws-env-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: './node-aws-env'
-          key: node-aws-env-${{ hashFiles('node-aws-env/package-lock.json') }}-${{ inputs.node_aws_env_ref }}
-
       - uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.hb_github_ssh_key }}
@@ -75,11 +68,26 @@ jobs:
           cache-dependency-path: '**/package-lock.json'
           scope: '@understory-io'
 
+      - name: Install global tools
+        run: |
+          npm install -g typescript@5.4.5 eslint@8.57.0 mocha@10.4.0
+
+      - name: Setup node-aws-env cache key
+        id: aws-env-cache
+        run: |
+          echo "cache-key=node-aws-env-${{ runner.os }}-${{ hashFiles('node-aws-env/package-lock.json') }}-${{ inputs.node_aws_env_ref }}" >> $GITHUB_OUTPUT
+
+      - name: Restore node-aws-env cache
+        id: restore-node-aws-env-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: './node-aws-env'
+          key: ${{ steps.aws-env-cache.outputs.cache-key }}
+
       - name: Install & Setup node-aws-env
         if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
         run: |
           cd ./node-aws-env
-          npm install -g typescript@5.4.5 eslint@8.57.0 mocha@10.4.0
           npm install
           tsc
 
@@ -89,7 +97,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: './node-aws-env'
-          key: node-aws-env-${{ hashFiles('node-aws-env/package-lock.json') }}-${{ inputs.node_aws_env_ref }}
+          key: ${{ steps.aws-env-cache.outputs.cache-key }}
 
       - name: Configure AWS credentials
         id: aws
@@ -105,8 +113,7 @@ jobs:
       - name: Install project dependencies
         run: |
           cd ./checkout${{ inputs.api_dir }}
-          npm install -g typescript@5.4.5 eslint@8.57.0 mocha@10.4.0
-          npm install
+          npm ci --foreground-scripts
 
       - name: Build
         run: |
@@ -126,7 +133,7 @@ jobs:
           [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
           mocha
 
-      - name: Deploy
-        run: |
-          cd ./checkout${{ inputs.api_dir }}
-          node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json
+      # - name: Deploy
+      #   run: |
+      #     cd ./checkout${{ inputs.api_dir }}
+      #     node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json
