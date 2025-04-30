@@ -3,7 +3,7 @@ name: "CI"
 on:
   workflow_call:
     secrets:
-      go_private_modules_pat:
+      go-private-modules-pat:
         required: true
 
 jobs:
@@ -15,7 +15,7 @@ jobs:
 
       - name: Setup access to private Go modules
         env:
-          GO_PRIVATE_MODULES_PAT: ${{ secrets.GO_PRIVATE_MODULES_PAT }}
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.go-private-modules-pat }}
         run: |
           git config --global \
             url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
