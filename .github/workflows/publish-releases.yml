@@ -7,34 +7,34 @@ on:
 
       releases-name:
         type: string
-        description: "Name shown in slack message. Defaults to repository name"
+        description: 'Name shown in slack message. Defaults to repository name'
         default: ${{ github.event.repository.name }}
       releases-name-subtitle:
         type: string
-        description: "Appended after release name"
+        description: 'Appended after release name'
         default: New packages released
       mono-repo:
         type: boolean
-        description: "Whether the repository is a mono-repo or not"
+        description: 'Whether the repository is a mono-repo or not'
       commit-message:
         type: string
-        description: "The commit message to use. Default to Version Packages"
+        description: 'The commit message to use. Default to Version Packages'
         default: Version Packages
       pull-request-title:
         type: string
-        description: "Default to Version Packages"
+        description: 'Default to Version Packages'
         default: Version Packages
     secrets:
       slack-webhook:
         required: true
       github_ssh_key:
-        description: "SSH key to use for git operations like referencing packages referenced by git urls"
+        description: 'SSH key to use for git operations like referencing packages referenced by git urls'
         required: false
       changeset-github-token:
         required: true
     outputs:
       published:
-        description: "Whether a new release was published or not"
+        description: 'Whether a new release was published or not'
         value: ${{ jobs.changeset-releases.outputs.published }}
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
@@ -55,13 +55,21 @@ jobs:
         with:
           ssh-key: ${{ secrets.github_ssh_key }}
 
+      - name: Setup access to private Go modules
+        env:
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.GO_PRIVATE_MODULES_PAT }}
+        run: |
+          git config --global \
+            url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
+            "https://github.com/understory-io"
+
       - name: Setup Node.js 22.x
         uses: actions/setup-node@v4
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           node-version: 22.x
-          registry-url: "https://npm.pkg.github.com"
+          registry-url: 'https://npm.pkg.github.com'
 
       - name: Setup SSH Agent
         env:
