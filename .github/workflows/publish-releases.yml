@@ -32,6 +32,9 @@ on:
         required: false
       changeset-github-token:
         required: true
+      go-private-modules-pat:
+        required: false
+        description: 'GitHub PAT to access private Go modules'
     outputs:
       published:
         description: 'Whether a new release was published or not'
@@ -57,7 +60,7 @@ jobs:
 
       - name: Setup access to private Go modules
         env:
-          GO_PRIVATE_MODULES_PAT: ${{ secrets.GO_PRIVATE_MODULES_PAT }}
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.go-private-modules-pat }}
         run: |
           git config --global \
             url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
