@@ -31,7 +31,7 @@ jobs:
       - name: Scan for package imports
         id: scan
         run: |
-          output=$(npx --yes @understory--io/scan-imports@v1.1.2 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_name }} --regex -ext .tsx,.ts -f json)
+          output=$(npx --yes @understory-io/scan-imports@v1.1.2 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_name }} --regex -ext .tsx,.ts -f json)
           filename=$(echo "$output" | sed -n 's/^Outputting .* to \(.*\.json\)$/\1/p')
           echo "filename=$filename" >> $GITHUB_OUTPUT
 
