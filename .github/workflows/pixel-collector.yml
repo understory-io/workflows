@@ -9,7 +9,10 @@ on:
       app_name:
         type: string
         required: true
-      package_name:
+      package_match_pattern:
+        type: string
+        required: true
+      package_display_name:
         type: string
         required: true
     secrets:
@@ -31,13 +34,13 @@ jobs:
       - name: Scan for package imports
         id: scan
         run: |
-          output=$(npx --yes @understory-io/scan-imports@v1.2.0 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_name }} --regex -ext .tsx,.ts -f json)
+          output=$(npx --yes @understory-io/scan-imports@v1.2.0 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_match_pattern }} --regex -ext .tsx,.ts -f json)
           filename=$(echo "$output" | sed -n 's/^Outputting .* to \(.*\.json\)$/\1/p')
           echo "filename=$filename" >> $GITHUB_OUTPUT
 
       - name: POST collected metrics to API
         run: |
-          escaped_package_name="${{ inputs.package_name }}"
+          escaped_package_name="${{ inputs.package_display_name }}"
           escaped_package_name="${escaped_package_name//\//__}"
           curl -X POST "https://api.app.understory.io/v1/pixel/collector/${{ inputs.app_name }}/${escaped_package_name}" \
             -H "Content-Type: application/json" \
