@@ -21,10 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          node-version: 22.x
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@understory-io'
+
       - name: Scan for package imports
         id: scan
         run: |
-          output=$(npx --yes scan-imports@v1.1.2 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_name }} -ext .tsx,.ts -f json)
+          output=$(npx --yes @understory--io/scan-imports@v1.1.2 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_name }} -ext .tsx,.ts -f json)
           filename=$(echo "$output" | sed -n 's/^Outputting .* to \(.*\.json\)$/\1/p')
           echo "filename=$filename" >> $GITHUB_OUTPUT
 
