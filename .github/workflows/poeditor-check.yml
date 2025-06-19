@@ -20,7 +20,7 @@ jobs:
         run: |
           RESP=$(curl --location 'https://api.poeditor.com/v2/languages/list' --silent --header 'Content-Type: application/x-www-form-urlencoded' --header 'Accept: application/json' --data-urlencode 'api_token=${{secrets.poeditor_api_key}}' --data-urlencode 'id=${{inputs.poeditor_project}}')
           RESULT=$(echo $RESP | jq -r '.result.languages | map(select(.percentage < 100)) | map(.name) | join("|")')
-          
+
           echo "CHECK_RESULT=${RESULT}" >> $GITHUB_OUTPUT
           if [[ $RESULT != "" ]]; then
             exit 1
@@ -36,7 +36,7 @@ jobs:
             const languages = input.split('|');
             let text = "";
             if(input == "") {
-              text = `All languages are fully translated`;
+              return;
             } else {
               text = `The following languages are not fully translated:`;
               languages.forEach(function(language) {
@@ -47,7 +47,7 @@ jobs:
             const output = `#### Translations Check Result 🗣️ \`${{ steps.check_translation_status.outcome }}\`
 
             ${text}
-            
+
             *Pushed by: @${{ github.actor }}*`;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
