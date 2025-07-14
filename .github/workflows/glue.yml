@@ -129,4 +129,4 @@ jobs:
       - name: Deploy
         run: |
           cd ./checkout${{ inputs.api_dir }}
-          node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json
+          node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json --path ${{ github.workspace }}/checkout${{ inputs.api_dir }}
