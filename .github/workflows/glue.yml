@@ -113,8 +113,8 @@ jobs:
           cd ./checkout${{ inputs.api_dir }}
           tsc 
           eslint
-          node ./node_modules/@riddance/env/bin/prepare.js
-          node ./node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout${{ inputs.api_dir }}
+          node ${{ github.workspace }}/checkout${{ inputs.api_dir }}/node_modules/@riddance/env/bin/prepare.js
+          node ${{ github.workspace }}/checkout${{ inputs.api_dir }}/node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout${{ inputs.api_dir }}
 
       - name: Test
         if: ${{ inputs.stage != 'production' }}
