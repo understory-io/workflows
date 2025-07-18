@@ -11,7 +11,7 @@ on:
         default: ""
       node_aws_env_ref:
         type: string
-        default: "v2.0.4"
+        default: "refs/heads/main"
     secrets:
       aws_access_key_id:
         required: true
