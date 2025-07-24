@@ -37,6 +37,7 @@ runs:
 
     - name: Setup aws role arn
       id: setup-aws-role-arn
+      shell: bash
       env:
         IMAGE_TAG_PREFIX: ${{ inputs.image_tag_prefix }}
       run: |
@@ -51,12 +52,13 @@ runs:
         ROLE_TO_ASSUME: ${{ env.ROLE_TO_ASSUME }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        aws-access-key-id: ${{ secrets.aws_access_key_id }}
-        aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
-        aws-region: ${{ secrets.aws_region }}
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region }}
         role-to-assume: ${{ env.ROLE_TO_ASSUME }}
         role-duration-seconds: 900
     - name: Check if lambda function exists
+      shell: bash
       id: check_lambda
       run: |
         if aws lambda get-function --function-name ${{ inputs.aws_function_name }} > /dev/null 2>&1; then
@@ -65,10 +67,11 @@ runs:
           echo "LAMBDA_EXISTS=false" >> $GITHUB_ENV
         fi
     - name: Update lambda image uri
+      shell: bash
       env:
         LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
       if: env.LAMBDA_EXISTS == 'true'
       run: |
         aws lambda update-function-code \
           --function-name '${{ inputs.aws_function_name }}' \
-          --image-uri '${{ steps.login-ecr.outputs.registry }}/${{ input.ecr_repository_name }}:${{ input.image_tag_prefix }}latest'
+          --image-uri '${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest'
