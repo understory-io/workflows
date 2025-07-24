@@ -1,0 +1,74 @@
+name: 'Lambda Deploy'
+description: 'Deploy a docker image to a lambda function'
+inputs:
+# Github access
+  aws_function_name:
+    description: "what is the function called"
+    required: true
+  image_tag_prefix:
+    description: "which tag to use"
+    required: true
+  ecr_repository_name:
+    description: "ecr repository name"
+    required: true
+# Aws
+  aws_access_key_id:
+    required: true
+    secret: true
+  aws_secret_access_key:
+    required: true
+    secret: true
+  aws_region:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region }}
+    -
+      name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Setup aws role arn
+      id: setup-aws-role-arn
+      env:
+        IMAGE_TAG_PREFIX: ${{ inputs.image_tag_prefix }}
+      run: |
+        if [ "$IMAGE_TAG_PREFIX" = "prod-" ]; then
+          ROLE_ARN="arn:aws:iam::189949407637:role/ContinuousDeliveryRole"
+        else
+          ROLE_ARN="arn:aws:iam::115578597962:role/ContinuousDeliveryRole"
+        fi
+        echo "ROLE_TO_ASSUME=$ROLE_ARN" >> $GITHUB_ENV
+    - name: Configure AWS credentials
+      env:
+        ROLE_TO_ASSUME: ${{ env.ROLE_TO_ASSUME }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.aws_access_key_id }}
+        aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+        aws-region: ${{ secrets.aws_region }}
+        role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+        role-duration-seconds: 900
+    - name: Check if lambda function exists
+      id: check_lambda
+      run: |
+        if aws lambda get-function --function-name ${{ inputs.aws_function_name }} > /dev/null 2>&1; then
+          echo "LAMBDA_EXISTS=true" >> $GITHUB_ENV
+        else
+          echo "LAMBDA_EXISTS=false" >> $GITHUB_ENV
+        fi
+    - name: Update lambda image uri
+      env:
+        LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
+      if: env.LAMBDA_EXISTS == 'true'
+      run: |
+        aws lambda update-function-code \
+          --function-name '${{ inputs.aws_function_name }}' \
+          --image-uri '${{ steps.login-ecr.outputs.registry }}/${{ input.ecr_repository_name }}:${{ input.image_tag_prefix }}latest'
