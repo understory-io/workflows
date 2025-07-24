@@ -2,7 +2,7 @@ name: 'Docker Build and Push'
 description: 'Greet someone'
 inputs:
 # Github access
-  ssh-key:
+  ssh_key:
     description: "key to use for cross repo access"
     required: true
     secret: true
@@ -11,6 +11,7 @@ inputs:
     required: true
   app_path:
     description: "in which application is your application located"
+    required: true
 
 # Aws
   ecr_repository_name:
@@ -36,13 +37,25 @@ runs:
       name: Setup ssh agent
       uses: webfactory/ssh-agent@v0.9.1
       with:
-          ssh-private-key: ${{ inputs.ssh-key }}
+          ssh-private-key: ${{ inputs.ssh_key }}
 
     -
       name: Setup git for private auth
+      shell: bash
       run: |
         git config --global url."ssh://git@github.com".insteadOf https://github.com && \
         mkdir -p -m 0600 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region }}
+    -
+      name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
 
     -
       name: Build and push Docker image
@@ -52,7 +65,7 @@ runs:
         file: ./${{ inputs.app_path }}/Dockerfile
         push: true
         tags: |
-          ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:$GITHUB_SHA
+          ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}${{ github.run_number }}
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
         ssh: |
