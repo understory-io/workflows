@@ -59,6 +59,8 @@ runs:
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
+      env:
+        BUILDX_NO_DEFAULT_ATTESTATIONS: "true"
       with:
         context: ${{ inputs.app_path }}
         file: ./${{ inputs.app_path }}/Dockerfile
