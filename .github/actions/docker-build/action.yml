@@ -1,7 +1,6 @@
-name: 'Docker Build and Push'
-description: 'Greet someone'
+name: "Docker Build and Push"
 inputs:
-# Github access
+  # Github access
   ssh_key:
     description: "key to use for cross repo access"
     required: true
@@ -15,7 +14,7 @@ inputs:
   target:
     description: "which target in the docker file to export"
 
-# Aws
+  # Aws
   ecr_repository_name:
     description: "ecr repository name"
     required: true
@@ -31,14 +30,12 @@ inputs:
 runs:
   using: "composite"
   steps:
-    -
-      name: Setup ssh agent
+    - name: Setup ssh agent
       uses: webfactory/ssh-agent@v0.9.1
       with:
-          ssh-private-key: ${{ inputs.ssh_key }}
+        ssh-private-key: ${{ inputs.ssh_key }}
 
-    -
-      name: Setup git for private auth
+    - name: Setup git for private auth
       shell: bash
       run: |
         git config --global url."ssh://git@github.com".insteadOf https://github.com && \
@@ -50,18 +47,20 @@ runs:
         aws-access-key-id: ${{ inputs.aws_access_key_id }}
         aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
         aws-region: ${{ inputs.aws_region }}
-    -
-      name: Login to Amazon ECR
+    - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    -
-      name: Build and push Docker image
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and push Docker image
       uses: docker/build-push-action@v6
       with:
         context: ${{ inputs.app_path }}
         file: ./${{ inputs.app_path }}/Dockerfile
         target: ${{ inputs.target }}
+        platforms: linux/amd64,linux/arm64
         push: true
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
