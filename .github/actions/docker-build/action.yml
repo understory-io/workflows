@@ -13,6 +13,8 @@ inputs:
     required: true
   target:
     description: "which target in the docker file to export"
+  platform:
+    description: "which platform to build for, eg. linux/arm64"
 
   # Aws
   ecr_repository_name:
@@ -59,15 +61,12 @@ runs:
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
-      env:
-        BUILDX_NO_DEFAULT_ATTESTATIONS: "true"
       with:
         context: ${{ inputs.app_path }}
         file: ./${{ inputs.app_path }}/Dockerfile
         target: ${{ inputs.target }}
-        platforms: ${{ inputs.ssh_key != '' && 'linux/amd64,linux/arm64' || '' }}
+        platforms: ${{ inputs.platform }}
         push: true
-        provenance: false
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}${{ github.run_number }}

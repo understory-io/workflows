@@ -15,6 +15,10 @@ on:
       artifacts_name:
         type: string
         required: true
+      architecture:
+        type: string
+        required: false
+        description: "The architecture to build for. This can be either arm64 or x86_64"
     secrets:
       aws_access_key_id:
         required: true
@@ -43,7 +47,8 @@ jobs:
         with:
           ssh_key: ${{ secrets.ssh_key }}
           image_tag_prefix: ${{ inputs.image_tag_prefix }}
-          app_path: .
+          app_path: ./
+          platform: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || inputs.architecture == 'x86_64' && 'linux/amd64' || '' }}
 
           ecr_repository_name: ${{ inputs.ecr_repository_name }}
           aws_access_key_id: ${{ secrets.aws_access_key_id }}
