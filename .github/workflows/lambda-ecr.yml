@@ -41,7 +41,7 @@ jobs:
           name: ${{ inputs.artifacts_name }}
 
       - name: Build Docker Image, tag, and push image to Amazon ECR
-        uses: understory-io/workflows/.github/actions/docker-build@feature/lambda-architecture
+        uses: understory-io/workflows/.github/actions/docker-build@main
         with:
           image_tag_prefix: ${{ inputs.image_tag_prefix }}
           app_path: ./
