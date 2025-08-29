@@ -22,6 +22,8 @@ on:
         required: true
       aws_region:
         required: true
+      ssh_key:
+        required: false
 
 jobs:
   build:
@@ -31,17 +33,6 @@ jobs:
       image_repo: ${{ inputs.ecr_repository_name }}
       image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.aws_access_key_id }}
-          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
-          aws-region: ${{ secrets.aws_region }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
       - name: Download a single artifact
         uses: actions/download-artifact@v4
         with:
@@ -50,7 +41,7 @@ jobs:
       - name: Build Docker Image, tag, and push image to Amazon ECR
         uses: understory-io/workflows/.github/actions/docker-build@feature/lambda-architecture
         with:
-          ssh_key: ${{ secrets.HB_GITHUB_SSH_KEY }}
+          ssh_key: ${{ secrets.ssh_key }}
           image_tag_prefix: ${{ inputs.image_tag_prefix }}
           app_path: .
 
