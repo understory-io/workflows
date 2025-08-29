@@ -15,6 +15,10 @@ on:
       artifacts_name:
         type: string
         required: true
+      architecture:
+        type: string
+        required: false
+        description: "The architecture to build for. This can be either arm64 or x86_64"
     secrets:
       aws_access_key_id:
         required: true
@@ -31,35 +35,22 @@ jobs:
       image_repo: ${{ inputs.ecr_repository_name }}
       image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.aws_access_key_id }}
-          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
-          aws-region: ${{ secrets.aws_region }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
       - name: Download a single artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifacts_name }}
 
       - name: Build Docker Image, tag, and push image to Amazon ECR
-        id: push_image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ inputs.ecr_repository_name }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}${{ github.run_number }}
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}latest
+        uses: understory-io/workflows/.github/actions/docker-build@main
+        with:
+          image_tag_prefix: ${{ inputs.image_tag_prefix }}
+          app_path: ./
+          platform: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || inputs.architecture == 'x86_64' && 'linux/amd64' || '' }}
 
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}${{ github.run_number }}
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.image_tag_prefix }}latest
+          ecr_repository_name: ${{ inputs.ecr_repository_name }}
+          aws_access_key_id: ${{ secrets.aws_access_key_id }}
+          aws_secret_access_key: ${{ secrets.aws_secret_access_key }}
+          aws_region: ${{ secrets.aws_region }}
 
   trigger-deploy:
     if: inputs.aws_function_name != ''
