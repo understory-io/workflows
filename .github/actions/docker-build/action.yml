@@ -61,11 +61,14 @@ runs:
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
+      env:
+        BUILDX_NO_DEFAULT_ATTESTATIONS: true
       with:
         context: ${{ inputs.app_path }}
         file: ./${{ inputs.app_path }}/Dockerfile
         target: ${{ inputs.target }}
         platforms: ${{ inputs.platform }}
+        provenance: false
         push: true
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
