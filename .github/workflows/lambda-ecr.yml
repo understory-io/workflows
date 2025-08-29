@@ -26,8 +26,6 @@ on:
         required: true
       aws_region:
         required: true
-      ssh_key:
-        required: false
 
 jobs:
   build:
@@ -45,7 +43,6 @@ jobs:
       - name: Build Docker Image, tag, and push image to Amazon ECR
         uses: understory-io/workflows/.github/actions/docker-build@feature/lambda-architecture
         with:
-          ssh_key: ${{ secrets.ssh_key }}
           image_tag_prefix: ${{ inputs.image_tag_prefix }}
           app_path: ./
           platform: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || inputs.architecture == 'x86_64' && 'linux/amd64' || '' }}
