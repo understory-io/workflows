@@ -69,5 +69,4 @@ runs:
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}${{ github.run_number }}
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
-        ssh: |
-          default=${{ env.SSH_AUTH_SOCK }}
+        ssh: ${{ inputs.ssh_key != '' && format('default={0}', env.SSH_AUTH_SOCK) || '' }}
