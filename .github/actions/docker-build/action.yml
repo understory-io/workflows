@@ -3,7 +3,7 @@ inputs:
   # Github access
   ssh_key:
     description: "key to use for cross repo access"
-    required: true
+    required: false
     secret: true
   image_tag_prefix:
     description: "which tag to use"
@@ -31,11 +31,13 @@ runs:
   using: "composite"
   steps:
     - name: Setup ssh agent
+      if: inputs.ssh_key != ''
       uses: webfactory/ssh-agent@v0.9.1
       with:
         ssh-private-key: ${{ inputs.ssh_key }}
 
     - name: Setup git for private auth
+      if: inputs.ssh_key != ''
       shell: bash
       run: |
         git config --global url."ssh://git@github.com".insteadOf https://github.com && \
