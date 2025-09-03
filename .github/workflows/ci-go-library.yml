@@ -39,6 +39,38 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      # Cache Docker images (especially LocalStack)
+      - name: Set up Docker image cache
+        id: docker-cache-setup
+        run: |
+          echo "DOCKER_CACHE_KEY=docker-localstack-$(date +%Y-%m)" >> $GITHUB_ENV
+          echo "DOCKER_IMAGE=localstack/localstack:latest" >> $GITHUB_ENV
+
+      - name: Restore Docker image cache
+        id: docker-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/docker-images
+          key: ${{ env.DOCKER_CACHE_KEY }}
+          restore-keys: |
+            docker-localstack-
+
+      - name: Load cached Docker images
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: |
+          if [ -f /tmp/docker-images/localstack.tar ]; then
+            echo "Loading cached LocalStack image..."
+            docker load < /tmp/docker-images/localstack.tar
+          fi
+
+      - name: Pull Docker images if not cached
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Pulling LocalStack image..."
+          docker pull ${{ env.DOCKER_IMAGE }}
+          mkdir -p /tmp/docker-images
+          docker save ${{ env.DOCKER_IMAGE }} > /tmp/docker-images/localstack.tar
+
       - name: Pull dependencies
         run: |
           go mod download -x
@@ -55,6 +87,14 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
+
+      # Save Docker image cache if it was newly pulled
+      - name: Save Docker image cache
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/docker-images
+          key: ${{ env.DOCKER_CACHE_KEY }}
 
         # experimental improved cache strategy
       - name: Trim Go cache
