@@ -47,6 +47,9 @@ jobs:
 
       - name: Test
         run: make test
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
 
         # experimental improved cache strategy
       - name: Trim Go cache
