@@ -40,13 +40,18 @@ jobs:
           cache: false
 
       - name: Pull dependencies
-        run: go mod download
+        run: |
+          go mod download -x
 
       - name: Build
-        run: make build
+        run: |
+          export GOFLAGS="-mod=readonly"
+          make build
 
       - name: Test
-        run: make test
+        run: |
+          export GOFLAGS="-mod=readonly"
+          make test
         env:
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
