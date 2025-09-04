@@ -117,17 +117,14 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 #### 7. ci-go-library (`ci-go-library.yml`)
 
-- **Purpose**: CI pipeline for Go libraries with LocalStack testing
-- **Inputs**:
-  - `localstack_version`: LocalStack version to use (default: "latest")
+- **Purpose**: CI pipeline for Go libraries
 - **Features**:
   - Private Go modules access setup
   - Go cache management (with date-based keys)
-  - GitHub Container Registry (GHCR) caching for LocalStack
   - Module download verification with `-x` flag
   - Read-only module mode (`-mod=readonly`) to prevent re-downloads
-  - Docker Buildx setup for efficient image handling
-  - Comprehensive testing with LocalStack support
+  - Build and test execution via Makefile
+  - AWS credentials provided for testing
 
 ### Testing & Quality Workflows
 
@@ -266,38 +263,32 @@ steps:
 
 ### Go Library CI Pattern
 
-1. Setup private module access
-2. Restore Go cache (date-based keys)
-3. Setup Docker Buildx and login to GHCR
-4. Pull LocalStack from GitHub Container Registry cache
-5. Download Go modules with verification (`-x` flag)
-6. Build with read-only modules (`-mod=readonly`)
-7. Run tests with LocalStack
-8. Save Go cache for future runs
+1. Checkout code
+2. Setup private module access via PAT
+3. Restore Go cache (date-based keys)
+4. Setup Go environment
+5. Download Go modules with verification (`go mod download -x`)
+6. Build with read-only modules (`GOFLAGS="-mod=readonly" make build`)
+7. Run tests with read-only modules (`GOFLAGS="-mod=readonly" make test`)
+8. Trim and save Go cache (only on main branch)
 
-#### Docker Image Caching Strategy (GHCR-based)
+#### Go Cache Strategy
 
-The workflow uses GitHub Container Registry for cross-job LocalStack caching:
+The workflow implements an optimized Go caching strategy based on https://danp.net/posts/github-actions-go-cache/:
 
-- **Cache Registry**: `ghcr.io/{repository}/localstack-cache:{version}`
-- **Fallback**: Direct pull from Docker Hub if cache miss
-- **Process**:
-  1. Try to pull from GHCR cache (5-10 seconds with 30s timeout)
-  2. If cache hit: Retag as original LocalStack image
-  3. If cache miss: Pull from Docker Hub (60s timeout)
-  4. Push to GHCR for next run (non-blocking, 60s timeout)
-  5. Verify image availability before tests
+- **Cache Key**: Uses `nonexistent` to always miss, forcing restore from `restore-keys`
+- **Restore Pattern**: `{OS}-go-{hash(go.mod)}-{date}` for date-based cache freshness
+- **Cache Paths**:
+  - `~/go/pkg/mod` - Downloaded Go modules
+  - `~/.cache/go-build` - Build cache
+- **Cache Trimming**: Removes files older than 90 minutes to keep cache lean
+- **Save Pattern**: Only saves on main branch with date-based keys
 
-**Performance Impact**:
-- First run: ~30-60 seconds (pull + cache to GHCR)
-- Subsequent runs: ~5-10 seconds (from GHCR cache)
-- Eliminates slow `docker load` operations from tar files
-
-**Key Improvements**:
-- No tar file save/load overhead
-- Cross-job persistence via GHCR
-- Robust timeouts and fallbacks
-- Non-blocking cache operations
+**Performance Optimizations**:
+- Module download with `-x` flag for visibility
+- Read-only module mode prevents redundant downloads during build/test
+- Date-based cache keys ensure fresh caches
+- Cache trimming prevents bloat
 
 ## Maintenance Notes
 
