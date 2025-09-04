@@ -117,11 +117,17 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 #### 7. ci-go-library (`ci-go-library.yml`)
 
-- **Purpose**: CI pipeline for Go libraries
+- **Purpose**: CI pipeline for Go libraries with LocalStack testing
+- **Inputs**:
+  - `localstack_version`: LocalStack version to use (default: "latest")
 - **Features**:
   - Private Go modules access setup
-  - Go cache management
-  - Comprehensive testing and linting
+  - Go cache management (with date-based keys)
+  - GitHub Container Registry (GHCR) caching for LocalStack
+  - Module download verification with `-x` flag
+  - Read-only module mode (`-mod=readonly`) to prevent re-downloads
+  - Docker Buildx setup for efficient image handling
+  - Comprehensive testing with LocalStack support
 
 ### Testing & Quality Workflows
 
@@ -261,10 +267,37 @@ steps:
 ### Go Library CI Pattern
 
 1. Setup private module access
-2. Restore Go cache
-3. Run tests
-4. Run linting
-5. Save cache for future runs
+2. Restore Go cache (date-based keys)
+3. Setup Docker Buildx and login to GHCR
+4. Pull LocalStack from GitHub Container Registry cache
+5. Download Go modules with verification (`-x` flag)
+6. Build with read-only modules (`-mod=readonly`)
+7. Run tests with LocalStack
+8. Save Go cache for future runs
+
+#### Docker Image Caching Strategy (GHCR-based)
+
+The workflow uses GitHub Container Registry for cross-job LocalStack caching:
+
+- **Cache Registry**: `ghcr.io/{repository}/localstack-cache:{version}`
+- **Fallback**: Direct pull from Docker Hub if cache miss
+- **Process**:
+  1. Try to pull from GHCR cache (5-10 seconds with 30s timeout)
+  2. If cache hit: Retag as original LocalStack image
+  3. If cache miss: Pull from Docker Hub (60s timeout)
+  4. Push to GHCR for next run (non-blocking, 60s timeout)
+  5. Verify image availability before tests
+
+**Performance Impact**:
+- First run: ~30-60 seconds (pull + cache to GHCR)
+- Subsequent runs: ~5-10 seconds (from GHCR cache)
+- Eliminates slow `docker load` operations from tar files
+
+**Key Improvements**:
+- No tar file save/load overhead
+- Cross-job persistence via GHCR
+- Robust timeouts and fallbacks
+- Non-blocking cache operations
 
 ## Maintenance Notes
 

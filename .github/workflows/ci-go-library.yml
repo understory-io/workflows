@@ -2,6 +2,12 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      localstack_version:
+        type: string
+        required: false
+        default: "latest"
+        description: "LocalStack version to use (e.g., '3.0.2', 'latest')"
     secrets:
       go-private-modules-pat:
         required: true
@@ -9,6 +15,8 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      LOCALSTACK_VERSION: ${{ inputs.localstack_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,37 +47,57 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      # Cache Docker images (especially LocalStack)
-      - name: Set up Docker image cache
-        id: docker-cache-setup
-        run: |
-          echo "DOCKER_CACHE_KEY=docker-localstack-$(date +%Y-%m)" >> $GITHUB_ENV
-          echo "DOCKER_IMAGE=localstack/localstack:latest" >> $GITHUB_ENV
+      # Set up Docker Buildx for caching
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Restore Docker image cache
-        id: docker-cache
-        uses: actions/cache/restore@v4
+      # Login to GitHub Container Registry for caching
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          path: /tmp/docker-images
-          key: ${{ env.DOCKER_CACHE_KEY }}
-          restore-keys: |
-            docker-localstack-
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Load cached Docker images
-        if: steps.docker-cache.outputs.cache-hit == 'true'
+      # Setup LocalStack with registry caching
+      - name: Setup LocalStack with registry caching
         run: |
-          if [ -f /tmp/docker-images/localstack.tar ]; then
-            echo "Loading cached LocalStack image..."
-            docker load < /tmp/docker-images/localstack.tar
+          CACHE_VERSION="${LOCALSTACK_VERSION:-latest}"
+          ORIGINAL_IMAGE="localstack/localstack:${CACHE_VERSION}"
+          CACHED_IMAGE="ghcr.io/${{ github.repository }}/localstack-cache:${CACHE_VERSION}"
+
+          echo "ORIGINAL_IMAGE=${ORIGINAL_IMAGE}" >> $GITHUB_ENV
+          echo "CACHED_IMAGE=${CACHED_IMAGE}" >> $GITHUB_ENV
+
+          echo "Attempting to pull cached LocalStack image from GHCR..."
+          if timeout 30s docker pull "${CACHED_IMAGE}" 2>/dev/null; then
+            echo "✅ Found cached image in GHCR, retagging as original"
+            docker tag "${CACHED_IMAGE}" "${ORIGINAL_IMAGE}"
+            echo "LOCALSTACK_READY=true" >> $GITHUB_ENV
+          else
+            echo "❌ Cache miss or timeout, trying direct pull..."
+            if timeout 60s docker pull "${ORIGINAL_IMAGE}" 2>/dev/null; then
+              echo "✅ Successfully pulled original image"
+              # Cache it for next time (non-blocking)
+              echo "Caching image to GHCR for future runs..."
+              docker tag "${ORIGINAL_IMAGE}" "${CACHED_IMAGE}"
+              timeout 60s docker push "${CACHED_IMAGE}" 2>/dev/null || echo "⚠️ Failed to cache image, continuing anyway"
+              echo "LOCALSTACK_READY=true" >> $GITHUB_ENV
+            else
+              echo "❌ Failed to pull LocalStack image"
+              echo "LOCALSTACK_READY=false" >> $GITHUB_ENV
+            fi
           fi
 
-      - name: Pull Docker images if not cached
-        if: steps.docker-cache.outputs.cache-hit != 'true'
+      - name: Verify LocalStack image
         run: |
-          echo "Pulling LocalStack image..."
-          docker pull ${{ env.DOCKER_IMAGE }}
-          mkdir -p /tmp/docker-images
-          docker save ${{ env.DOCKER_IMAGE }} > /tmp/docker-images/localstack.tar
+          echo "Verifying LocalStack image..."
+          docker images | grep localstack || echo "No LocalStack image found"
+
+          if [ "$LOCALSTACK_READY" != "true" ]; then
+            echo "❌ LocalStack not ready, tests may fail"
+            exit 1
+          fi
 
       - name: Pull dependencies
         run: |
@@ -87,14 +115,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
-
-      # Save Docker image cache if it was newly pulled
-      - name: Save Docker image cache
-        if: steps.docker-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/docker-images
-          key: ${{ env.DOCKER_CACHE_KEY }}
+          LOCALSTACK_VERSION: ${{ env.LOCALSTACK_VERSION }}
 
         # experimental improved cache strategy
       - name: Trim Go cache
