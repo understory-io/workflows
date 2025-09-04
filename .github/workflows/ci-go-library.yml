@@ -70,18 +70,18 @@ jobs:
           echo "CACHED_IMAGE=${CACHED_IMAGE}" >> $GITHUB_ENV
 
           echo "Attempting to pull cached LocalStack image from GHCR..."
-          if timeout 30s docker pull "${CACHED_IMAGE}" 2>/dev/null; then
+          if timeout 60s docker pull "${CACHED_IMAGE}" 2>/dev/null; then
             echo "✅ Found cached image in GHCR, retagging as original"
             docker tag "${CACHED_IMAGE}" "${ORIGINAL_IMAGE}"
             echo "LOCALSTACK_READY=true" >> $GITHUB_ENV
           else
             echo "❌ Cache miss or timeout, trying direct pull..."
-            if timeout 60s docker pull "${ORIGINAL_IMAGE}" 2>/dev/null; then
+            if timeout 120s docker pull "${ORIGINAL_IMAGE}" 2>/dev/null; then
               echo "✅ Successfully pulled original image"
               # Cache it for next time (non-blocking)
               echo "Caching image to GHCR for future runs..."
               docker tag "${ORIGINAL_IMAGE}" "${CACHED_IMAGE}"
-              timeout 60s docker push "${CACHED_IMAGE}" 2>/dev/null || echo "⚠️ Failed to cache image, continuing anyway"
+              timeout 120s docker push "${CACHED_IMAGE}" 2>/dev/null || echo "⚠️ Failed to cache image, continuing anyway"
               echo "LOCALSTACK_READY=true" >> $GITHUB_ENV
             else
               echo "❌ Failed to pull LocalStack image"
