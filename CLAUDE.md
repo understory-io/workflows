@@ -120,8 +120,11 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: CI pipeline for Go libraries
 - **Features**:
   - Private Go modules access setup
-  - Go cache management
-  - Comprehensive testing and linting
+  - Go cache management (with date-based keys)
+  - Module download verification with `-x` flag
+  - Read-only module mode (`-mod=readonly`) to prevent re-downloads
+  - Build and test execution via Makefile
+  - AWS credentials provided for testing
 
 ### Testing & Quality Workflows
 
@@ -260,11 +263,32 @@ steps:
 
 ### Go Library CI Pattern
 
-1. Setup private module access
-2. Restore Go cache
-3. Run tests
-4. Run linting
-5. Save cache for future runs
+1. Checkout code
+2. Setup private module access via PAT
+3. Restore Go cache (date-based keys)
+4. Setup Go environment
+5. Download Go modules with verification (`go mod download -x`)
+6. Build with read-only modules (`GOFLAGS="-mod=readonly" make build`)
+7. Run tests with read-only modules (`GOFLAGS="-mod=readonly" make test`)
+8. Trim and save Go cache (only on main branch)
+
+#### Go Cache Strategy
+
+The workflow implements an optimized Go caching strategy based on https://danp.net/posts/github-actions-go-cache/:
+
+- **Cache Key**: Uses `nonexistent` to always miss, forcing restore from `restore-keys`
+- **Restore Pattern**: `{OS}-go-{hash(go.mod)}-{date}` for date-based cache freshness
+- **Cache Paths**:
+  - `~/go/pkg/mod` - Downloaded Go modules
+  - `~/.cache/go-build` - Build cache
+- **Cache Trimming**: Removes files older than 90 minutes to keep cache lean
+- **Save Pattern**: Only saves on main branch with date-based keys
+
+**Performance Optimizations**:
+- Module download with `-x` flag for visibility
+- Read-only module mode prevents redundant downloads during build/test
+- Date-based cache keys ensure fresh caches
+- Cache trimming prevents bloat
 
 ## Maintenance Notes
 
