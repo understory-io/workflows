@@ -68,6 +68,9 @@ jobs:
       - name: Start LocalStack and run migrations
         if: ${{ inputs.localstack }}
         run: mise run local:up
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
 
       - name: Run tests
         run: mise run test
