@@ -106,7 +106,7 @@ jobs:
           aws_region: ${{ secrets.aws_region }}
 
   trigger-deploy:
-    if: inputs.aws_function_name == ''
+    if: inputs.aws_function_name != ''
     needs: [build]
     name: "Trigger Deploy"
     runs-on: ubuntu-latest
