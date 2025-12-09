@@ -36,7 +36,7 @@ jobs:
       image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
       - name: Download a single artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: ${{ inputs.artifacts_name }}
 
