@@ -45,7 +45,7 @@ jobs:
 
           echo "TARGET_BRANCH=$target_branch" >> $GITHUB_OUTPUT
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
 

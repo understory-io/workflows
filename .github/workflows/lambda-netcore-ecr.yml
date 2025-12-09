@@ -50,7 +50,7 @@ jobs:
       image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup .NET Core
         uses: actions/setup-dotnet@v5
