@@ -55,7 +55,7 @@ jobs:
 
       - name: Restore node-aws-env cache
         id: restore-node-aws-env-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: './node-aws-env'
           key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
@@ -86,7 +86,7 @@ jobs:
       - name: Save node-aws-env cache
         if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
         id: save-node-aws-env-cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: './node-aws-env'
           key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env

@@ -23,7 +23,7 @@ jobs:
 
       # Go caching strategy is based on https://danp.net/posts/github-actions-go-cache/
       - name: Restore Go cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -73,7 +73,7 @@ jobs:
 
       - name: Save Go cache
         if: ${{ github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           # Caches both the downloaded modules and the compiled build cache.
           path: |

@@ -35,7 +35,7 @@ jobs:
 
       # Go caching strategy is based on https://danp.net/posts/github-actions-go-cache/
       - name: Restore Go cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -50,7 +50,7 @@ jobs:
 
       - name: Restore LocalStack Docker image cache
         if: ${{ inputs.localstack }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/localstack-image.tar
           key: localstack-image-${{ runner.os }}
@@ -97,7 +97,7 @@ jobs:
 
       - name: Save Go cache
         if: ${{ github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           # Caches both the downloaded modules and the compiled build cache.
           path: |
