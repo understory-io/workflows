@@ -74,7 +74,7 @@ jobs:
         env:
           GOFLAGS: "-mod=readonly"
 
-      - name: Build Lambda binary
+      - name: Build module
         run: mise run build
         env:
           GOFLAGS: "-mod=readonly"
