@@ -1,4 +1,4 @@
-name: 'Build & Deploy Glue Lambda Service'
+name: "Build & Deploy Glue Lambda Service"
 
 on:
   workflow_call:
@@ -8,10 +8,10 @@ on:
         required: true
       api_dir:
         type: string
-        default: ''
+        default: ""
       node_aws_env_ref:
         type: string
-        default: 'refs/heads/main'
+        default: "refs/heads/main"
     secrets:
       aws_access_key_id:
         required: true
@@ -28,21 +28,21 @@ on:
 
 jobs:
   build:
-    name: 'Build & Deploy Service'
+    name: "Build & Deploy Service"
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          path: './checkout'
+          path: "./checkout"
 
       - name: Checkout Glue
         uses: actions/checkout@v6
         with:
           repository: understory-io/glue
           ref: main
-          path: './glue'
+          path: "./glue"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Checkout node-aws-env
@@ -50,14 +50,14 @@ jobs:
         with:
           repository: understory-io/node-aws-env
           ref: ${{ inputs.node_aws_env_ref }}
-          path: './node-aws-env'
+          path: "./node-aws-env"
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
       - name: Restore node-aws-env cache
         id: restore-node-aws-env-cache
         uses: actions/cache/restore@v5
         with:
-          path: './node-aws-env'
+          path: "./node-aws-env"
           key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
 
       - uses: webfactory/ssh-agent@v0.9.1
@@ -69,11 +69,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          node-version: 22
-          registry-url: 'https://npm.pkg.github.com'
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
-          scope: '@understory-io'
+          node-version: 24
+          registry-url: "https://npm.pkg.github.com"
+          cache: "npm"
+          cache-dependency-path: "**/package-lock.json"
+          scope: "@understory-io"
 
       - name: Install & Setup node-aws-env
         if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
@@ -88,7 +88,7 @@ jobs:
         id: save-node-aws-env-cache
         uses: actions/cache/save@v5
         with:
-          path: './node-aws-env'
+          path: "./node-aws-env"
           key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env
 
       - name: Configure AWS credentials
@@ -111,7 +111,7 @@ jobs:
       - name: Build
         run: |
           cd ./checkout${{ inputs.api_dir }}
-          tsc 
+          tsc
           eslint
           #node ${{ github.workspace }}/checkout${{ inputs.api_dir }}/node_modules/@riddance/env/bin/prepare.js
           #node ${{ github.workspace }}/checkout${{ inputs.api_dir }}/node_modules/@riddance/env/bin/install.js ${{ github.workspace }}/checkout${{ inputs.api_dir }}
