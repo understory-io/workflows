@@ -10,6 +10,10 @@ on:
         type: boolean
         required: false
         default: false
+      localstack-version:
+        type: string
+        required: false
+        default: "4.2.0"
 
 jobs:
   ci:
@@ -53,7 +57,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /tmp/localstack-image.tar
-          key: localstack-image-${{ runner.os }}
+          key: localstack-image-${{ runner.os }}-${{ inputs.localstack-version }}
 
       - name: Load or pull LocalStack Docker image
         if: ${{ inputs.localstack }}
@@ -61,8 +65,8 @@ jobs:
           if [ -f /tmp/localstack-image.tar ]; then
             docker load -i /tmp/localstack-image.tar
           else
-            docker pull localstack/localstack
-            docker save localstack/localstack -o /tmp/localstack-image.tar
+            docker pull localstack/localstack:${{ inputs.localstack-version }}
+            docker save localstack/localstack:${{ inputs.localstack-version }} -o /tmp/localstack-image.tar
           fi
 
       - name: Start LocalStack and run migrations
