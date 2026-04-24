@@ -14,7 +14,7 @@ on:
       node-version:
         description: 'Node version for build steps (only used when build-command is set)'
         type: string
-        default: '22'
+        default: '24'
       extra-git-add-paths:
         description: 'Additional paths to git add beyond translation directories (space-separated)'
         type: string
