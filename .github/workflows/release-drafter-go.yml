@@ -4,8 +4,18 @@ on:
 jobs:
   update-release-draft:
     name: updating draft
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: release-drafter/release-drafter@v7
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  autolabel:
+    name: autolabel
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter/autolabeler@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
