@@ -1,0 +1,121 @@
+name: Crowdin Pull Translations
+
+on:
+  workflow_call:
+    inputs:
+      crowdin-download-flags:
+        description: 'Additional flags for crowdin download command (e.g., --branch main)'
+        type: string
+        default: ''
+      build-command:
+        description: 'Optional command to run after flattening (e.g., npm run build)'
+        type: string
+        default: ''
+      node-version:
+        description: 'Node version for build steps (only used when build-command is set)'
+        type: string
+        default: '22'
+      extra-git-add-paths:
+        description: 'Additional paths to git add beyond translation directories (space-separated)'
+        type: string
+        default: ''
+    secrets:
+      crowdin-project-id:
+        required: true
+      crowdin-token:
+        required: true
+      pr-token:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pull-translations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.pr-token }}
+
+      - name: Install Crowdin CLI
+        run: npm install -g @crowdin/cli
+
+      - name: Download translations from Crowdin
+        run: crowdin download ${{ inputs.crowdin-download-flags }}
+        env:
+          CROWDIN_PROJECT_ID: ${{ secrets.crowdin-project-id }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.crowdin-token }}
+          CROWDIN_API_TOKEN: ${{ secrets.crowdin-token }}
+
+      - name: Flatten translation files
+        run: |
+          # Get source files to exclude
+          sources=$(grep 'source:' crowdin.yml | sed 's/.*source: *//; s|^/||')
+
+          # Expand translation patterns from crowdin.yml, exclude source files, flatten
+          grep 'translation:' crowdin.yml | sed 's/.*translation: *//; s/%[^%]*%/*/g; s|^/||' | \
+            while read -r pattern; do
+              for f in $pattern; do [ -f "$f" ] && echo "$f"; done
+            done | \
+            grep -v -F "$sources" | \
+            xargs -r perl -0777 -i -pe 's/\{\s*"defaultMessage":\s*("(?:[^"\\]|\\.)*")(?:,\s*"description"\s*:\s*"(?:[^"\\]|\\.)*")?\s*\}/$1/gm'
+
+      - name: Setup Node.js
+        if: inputs.build-command != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Cache node_modules
+        if: inputs.build-command != ''
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: inputs.build-command != '' && steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Build
+        if: inputs.build-command != ''
+        run: ${{ inputs.build-command }}
+
+      - name: Commit and push translations
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin
+
+          git switch -C l10n_main
+
+          # Derive git-add paths from crowdin.yml translation patterns
+          add_paths=$(grep 'translation:' crowdin.yml | sed 's/.*translation: *//; s|^/||; s|%[^%]*%.*||; s|/$||' | sort -u | sed 's|$|/|' | tr '\n' ' ')
+          git add $add_paths ${{ inputs.extra-git-add-paths }}
+
+          if git diff --staged --quiet; then
+            echo "No translation changes compared to main."
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            git commit -m "chore: sync translations from Crowdin"
+            git push --force-with-lease origin l10n_main
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or update pull request
+        if: steps.commit.outputs.has_changes == 'true'
+        run: |
+          gh pr create \
+            --base main \
+            --head l10n_main \
+            --title "New Crowdin translations" \
+            --body "Automated translations sync from Crowdin" \
+          || echo "PR already exists"
+          gh pr merge l10n_main --auto --squash
+        env:
+          GITHUB_TOKEN: ${{ secrets.pr-token }}
