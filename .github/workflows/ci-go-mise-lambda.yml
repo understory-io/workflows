@@ -98,8 +98,8 @@ jobs:
           name: ${{ inputs.app_name }}
           include-hidden-files: true
           path: |
-            ./${{ inputs.app_dir }}/bin/**
-            ./${{ inputs.app_dir }}/Dockerfile
+            ${{ inputs.app_dir }}/bin/**
+            ${{ inputs.app_dir }}/Dockerfile
 
       - name: Trim Go build cache
         if: github.ref == 'refs/heads/main'
