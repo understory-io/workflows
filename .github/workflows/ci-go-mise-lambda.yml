@@ -15,7 +15,7 @@ on:
         description: "LocalStack Docker image to use"
         required: false
         type: string
-        default: localstack/localstack
+        default: localstack/localstack:4.2.0
     secrets:
       go_private_modules_pat:
         required: true
