@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: localstack/localstack:4.2.0
+      enable_localstack:
+        description: "Whether to start LocalStack for integration tests"
+        required: false
+        type: boolean
+        default: true
     secrets:
       go_private_modules_pat:
         required: true
@@ -57,12 +62,14 @@ jobs:
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
       - name: Restore LocalStack Docker image cache
+        if: inputs.enable_localstack
         uses: actions/cache@v5
         with:
           path: /tmp/localstack-image.tar
           key: localstack-image-${{ runner.os }}-${{ inputs.localstack_image }}
 
       - name: Load or pull LocalStack Docker image
+        if: inputs.enable_localstack
         run: |
           if [ -f /tmp/localstack-image.tar ]; then
             docker load -i /tmp/localstack-image.tar
@@ -72,6 +79,7 @@ jobs:
           fi
 
       - name: Start LocalStack and run migrations
+        if: inputs.enable_localstack
         run: cd ${{ inputs.app_dir }} && mise local:up
 
       - name: Run tests
