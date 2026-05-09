@@ -1,0 +1,107 @@
+name: CI Go Mise Lambda
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "Application name, used as the artifact name"
+        required: true
+        type: string
+      app_dir:
+        description: "Path to the application directory (e.g. apps/bookings-core)"
+        required: true
+        type: string
+      localstack_image:
+        description: "LocalStack Docker image to use"
+        required: false
+        type: string
+        default: localstack/localstack
+    secrets:
+      go_private_modules_pat:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Configure access to private Go modules
+        env:
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.go_private_modules_pat }}
+        run: |
+          git config --global \
+            url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
+            "https://github.com/understory-io"
+          echo "GOPRIVATE=github.com/understory-io/*" >> $GITHUB_ENV
+          echo "GONOSUMDB=github.com/understory-io/*" >> $GITHUB_ENV
+
+      - name: Install Mise
+        uses: jdx/mise-action@v4
+
+      # Go caching strategy is based on https://danp.net/posts/github-actions-go-cache/
+      - name: Restore Go cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: nonexistent
+          restore-keys: ${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+
+      - name: Download Go dependencies
+        run: cd ${{ inputs.app_dir }} && go mod download -x
+
+      - name: Restore LocalStack Docker image cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/localstack-image.tar
+          key: localstack-image-${{ runner.os }}-${{ inputs.localstack_image }}
+
+      - name: Load or pull LocalStack Docker image
+        run: |
+          if [ -f /tmp/localstack-image.tar ]; then
+            docker load -i /tmp/localstack-image.tar
+          else
+            docker pull ${{ inputs.localstack_image }}
+            docker save ${{ inputs.localstack_image }} -o /tmp/localstack-image.tar
+          fi
+
+      - name: Start LocalStack and run migrations
+        run: cd ${{ inputs.app_dir }} && mise local:up
+
+      - name: Run tests
+        run: cd ${{ inputs.app_dir }} && mise test
+        env:
+          GOFLAGS: "-mod=readonly"
+
+      - name: Build Lambda binary
+        run: cd ${{ inputs.app_dir }} && mise build
+        env:
+          GOFLAGS: "-mod=readonly"
+
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.app_name }}
+          include-hidden-files: true
+          path: |
+            ./${{ inputs.app_dir }}/bin/**
+            ./${{ inputs.app_dir }}/Dockerfile
+
+      - name: Trim Go build cache
+        if: github.ref == 'refs/heads/main'
+        run: find ~/.cache/go-build -type f -mmin +90 -delete
+
+      - name: Set cache date
+        run: echo "GO_CACHE_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+      - name: Save Go cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: "${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ env.GO_CACHE_DATE }}"
