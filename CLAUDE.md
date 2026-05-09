@@ -160,6 +160,19 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: Draft releases for Go projects
 - **Trigger**: `workflow_call`
 
+#### 4. ci-go-mise-lambda (`ci-go-mise-lambda.yml`)
+
+- **Purpose**: Shared build/test/package job for mise-based Go Lambda services
+- **Trigger**: `workflow_call`
+- **Replaces**: Duplicated `build` jobs in per-service workflows (bookings-core, experience-core, storefronts-core)
+- **Key Inputs**:
+  - `app_name` (required): artifact name, e.g. "bookings-core"
+  - `app_dir` (required): path to the app, e.g. "apps/bookings-core"
+  - `localstack_image` (optional, default: `localstack/localstack`): allows pinning a specific version
+- **Key Secret**: `go_private_modules_pat`
+- **What it does**: checkout → private Go module config → Mise install → Go cache restore → `go mod download -x` → LocalStack cache/load → `mise local:up` → `mise test` → `mise build` → artifact upload → Go cache save (main only)
+- **Cache key fix**: uses `hashFiles(format('{0}/go.mod', inputs.app_dir))` to correctly hash the subdirectory go.mod (nested `${{ }}` inside `hashFiles()` is not evaluated by GitHub Actions)
+
 ### Utility Workflows
 
 #### 14. setup-node-aws-env (`setup-node-aws-env.yml`)
