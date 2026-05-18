@@ -19,6 +19,11 @@ on:
         type: string
         required: false
         description: "The architecture to build for. This can be either arm64 or x86_64"
+      deploy_account_id:
+        type: string
+        required: false
+        default: ""
+        description: "AWS account id to assume into for the lambda deploy step. Overrides the prefix-based default (prod- → platform-prod, otherwise platform-dev). Use when the function lives in an account that doesn't match the image tag convention."
     secrets:
       aws_access_key_id:
         required: true
@@ -74,8 +79,11 @@ jobs:
         id: setup-aws-role-arn
         env:
           IMAGE_TAG_PREFIX: ${{ inputs.image_tag_prefix }}
+          DEPLOY_ACCOUNT_ID: ${{ inputs.deploy_account_id }}
         run: |
-          if [ "$IMAGE_TAG_PREFIX" = "prod-" ]; then
+          if [ -n "$DEPLOY_ACCOUNT_ID" ]; then
+            ROLE_ARN="arn:aws:iam::${DEPLOY_ACCOUNT_ID}:role/ContinuousDeliveryRole"
+          elif [ "$IMAGE_TAG_PREFIX" = "prod-" ]; then
             ROLE_ARN="arn:aws:iam::189949407637:role/ContinuousDeliveryRole"
           else
             ROLE_ARN="arn:aws:iam::115578597962:role/ContinuousDeliveryRole"
