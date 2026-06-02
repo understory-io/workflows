@@ -52,31 +52,30 @@ steps:
 - **`lambda-ecr`** - Build and push Lambda Docker images
 - **`lambda-netcore-ecr`** - Build and push .NET Core Lambda images
 - **`glue`** - Deploy AWS Glue services
-- **`terraform`** - Run Terraform workflows
 
 #### Libraries
 
 - **`ci-go-library`** - CI pipeline for Go libraries
+- **`ci-go-library-mise`** - CI pipeline for Go libraries (Mise-based)
+- **`ci-go-mise-lambda`** - Build/test/package for mise-based Go Lambda services
 - **`build-netcore-library`** - Build .NET Core libraries
 - **`build-deploy-netcore-library`** - Build and deploy .NET libraries
 
 #### Testing & Quality
 
-- **`cypress`** - Run Cypress E2E tests
 - **`poeditor-check`** - Validate translations
+- **`crowdin-pull-translations`** - Pull Crowdin translations and open a PR
 
 #### Release Management
 
 - **`create-deployment-prs`** - Auto-update release PRs
-- **`assign-reviewers`** - Auto-assign PR reviewers
 - **`publish-releases`** - Publish releases
 - **`release-drafter-go`** - Draft Go releases
 
 #### Utilities
 
-- **`setup-node-aws-env`** - Setup Node.js with AWS
 - **`repo-data`** - Extract repository metadata
-- **`collect-components-usage`** - Collect usage metrics
+- **`pixel-collector`** - Collect component/package usage metrics
 
 ## Environment Conventions
 
