@@ -79,43 +79,36 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 ### Infrastructure & Deployment Workflows
 
-#### 1. terraform (`terraform.yml`)
-
-- **Purpose**: Run Terraform operations (format, init, validate, plan, apply)
-- **Trigger**: `workflow_call`
-- **Key Inputs**: `tf_workspace`, `tf_version`, `tf_apply` (boolean)
-- **Features**: PR comments with plan output, conditional apply
-
-#### 2. lambda-ecr (`lambda-ecr.yml`)
+#### 1. lambda-ecr (`lambda-ecr.yml`)
 
 - **Purpose**: Build and push Docker images for Lambda functions
 - **Trigger**: `workflow_call`
 - **Architecture Support**: ARM64 and x86_64
 - **Uses**: `docker-build` action internally
 
-#### 3. lambda-netcore-ecr (`lambda-netcore-ecr.yml`)
+#### 2. lambda-netcore-ecr (`lambda-netcore-ecr.yml`)
 
 - **Purpose**: Build and deploy .NET Core Lambda functions
 - **Similar to**: lambda-ecr but for .NET Core
 
-#### 4. glue (`glue.yml`)
+#### 3. glue (`glue.yml`)
 
 - **Purpose**: Build and deploy AWS Glue Lambda services
 - **Trigger**: `workflow_call`
 
 ### Library & Application Build Workflows
 
-#### 5. build-netcore-library (`build-netcore-library.yml`)
+#### 4. build-netcore-library (`build-netcore-library.yml`)
 
 - **Purpose**: Build .NET Core libraries
 - **Trigger**: `workflow_call`
 
-#### 6. build-deploy-netcore-library (`build-deploy-netcore-library.yml`)
+#### 5. build-deploy-netcore-library (`build-deploy-netcore-library.yml`)
 
 - **Purpose**: Build and deploy .NET Core libraries
 - **Trigger**: `workflow_call`
 
-#### 7. ci-go-library (`ci-go-library.yml`)
+#### 6. ci-go-library (`ci-go-library.yml`)
 
 - **Purpose**: CI pipeline for Go libraries
 - **Features**:
@@ -126,17 +119,22 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
   - Build and test execution via Makefile
   - AWS credentials provided for testing
 
-### Testing & Quality Workflows
+#### 7. ci-go-library-mise (`ci-go-library-mise.yml`)
 
-#### 8. cypress (`cypress.yml`)
-
-- **Purpose**: Run Cypress end-to-end tests
+- **Purpose**: CI pipeline for Go libraries (Mise-based toolchain)
 - **Trigger**: `workflow_call`
 
-#### 9. poeditor-check (`poeditor-check.yml`)
+### Testing & Quality Workflows
+
+#### 8. poeditor-check (`poeditor-check.yml`)
 
 - **Purpose**: Verify all POEditor terms are translated
 - **Use Case**: Internationalization validation
+
+#### 9. crowdin-pull-translations (`crowdin-pull-translations.yml`)
+
+- **Purpose**: Pull translations from Crowdin and open a PR
+- **Trigger**: `workflow_call`
 
 ### Release Management Workflows
 
@@ -145,22 +143,17 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: Automatically update release pull requests
 - **Trigger**: `workflow_call`
 
-#### 11. assign-reviewers (`assign-reviewers.yml`)
-
-- **Purpose**: Auto-assign reviewers to release PRs
-- **Trigger**: `workflow_call`
-
-#### 12. publish-releases (`publish-releases.yml`)
+#### 11. publish-releases (`publish-releases.yml`)
 
 - **Purpose**: Publish releases (details not provided in name)
 - **Trigger**: `workflow_call`
 
-#### 13. release-drafter-go (`release-drafter-go.yml`)
+#### 12. release-drafter-go (`release-drafter-go.yml`)
 
 - **Purpose**: Draft releases for Go projects
 - **Trigger**: `workflow_call`
 
-#### 4. ci-go-mise-lambda (`ci-go-mise-lambda.yml`)
+#### 13. ci-go-mise-lambda (`ci-go-mise-lambda.yml`)
 
 - **Purpose**: Shared build/test/package job for mise-based Go Lambda services
 - **Trigger**: `workflow_call`
@@ -175,20 +168,15 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 ### Utility Workflows
 
-#### 14. setup-node-aws-env (`setup-node-aws-env.yml`)
-
-- **Purpose**: Setup Node.js with AWS environment
-- **Use Case**: Node.js projects requiring AWS integration
-
-#### 15. repo-data (`repo-data.yml`)
+#### 14. repo-data (`repo-data.yml`)
 
 - **Purpose**: Extract and process repository metadata
 - **Trigger**: `workflow_call`
 
-#### 16. collect-components-usage (`collect-components-usage.yml`)
+#### 15. pixel-collector (`pixel-collector.yml`)
 
-- **Purpose**: Collect usage metrics for all packages
-- **Alternative**: `pixel-collector.yml` (similar purpose)
+- **Purpose**: Collect component/package usage metrics
+- **Trigger**: `workflow_call`
 
 ## Usage Patterns
 
@@ -245,7 +233,6 @@ steps:
 - `aws_secret_access_key`: AWS secret credentials
 - `aws_region`: Target AWS region
 - `go-private-modules-pat`: GitHub PAT for private Go modules
-- `tf_token`: Terraform Cloud API token
 
 ## Best Practices
 
@@ -265,14 +252,6 @@ steps:
 4. Workflow downloads artifacts and builds Docker image
 5. Image pushed to ECR with appropriate tags
 6. Optional: Deploy to Lambda using `lambda-deploy` action
-
-### Terraform Infrastructure Pattern
-
-1. Format check
-2. Initialize workspace
-3. Validate configuration
-4. Plan changes (on PR)
-5. Apply changes (when `tf_apply: true`)
 
 ### Go Library CI Pattern
 
