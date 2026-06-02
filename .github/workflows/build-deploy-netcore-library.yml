@@ -1,6 +1,12 @@
 name: ".NET Core Library"
 on:
   workflow_call:
+    inputs:
+      timeout_minutes:
+        description: "Max minutes before the build job is cancelled (forwarded to build-netcore-library)"
+        type: number
+        required: false
+        default: 5
     secrets:
       nuget_auth_token:
         required: true
@@ -14,6 +20,7 @@ jobs:
       buildConfiguration: 'Debug'
       versionSuffix: alpha.${{ github.run_number }}
       nuget_username: ${{ github.actor }}
+      timeout_minutes: ${{ inputs.timeout_minutes }}
     secrets:
       nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
@@ -24,6 +31,7 @@ jobs:
       buildConfiguration: 'Debug'
       versionSuffix: alpha.${{ github.run_number }}
       nuget_username: ${{ github.actor }}
+      timeout_minutes: ${{ inputs.timeout_minutes }}
     secrets:
       nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
@@ -34,6 +42,7 @@ jobs:
       buildConfiguration: 'Release'
       versionSuffix: rc.${{ github.run_number }}
       nuget_username: ${{ github.actor }}
+      timeout_minutes: ${{ inputs.timeout_minutes }}
     secrets:
       nuget_auth_token: ${{ secrets.nuget_auth_token }}
 
@@ -44,5 +53,6 @@ jobs:
       buildConfiguration: 'Release'
       version: ${GITHUB_REF/refs\/tags\//}
       nuget_username: ${{ github.actor }}
+      timeout_minutes: ${{ inputs.timeout_minutes }}
     secrets:
       nuget_auth_token: ${{ secrets.nuget_auth_token }}

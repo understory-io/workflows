@@ -3,6 +3,11 @@ name: "Setup node AWS Env"
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 10
       path:
         type: string
         required: false
@@ -15,6 +20,7 @@ jobs:
   build:
     name: "Checkout"
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - name: Checkout node-aws-env
         uses: actions/checkout@v6

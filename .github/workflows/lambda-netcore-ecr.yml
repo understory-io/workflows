@@ -3,6 +3,11 @@ name: "Build & Push Image"
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 10
       dotnet_version:
         type: string
         required: false
@@ -45,6 +50,7 @@ jobs:
   build:
     name: "Build & Push Image"
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     outputs:
       image_repo: ${{ inputs.ecr_repository_name }}
       image_tag: ${{ inputs.image_tag_prefix }}latest
@@ -110,6 +116,7 @@ jobs:
     needs: [build]
     name: "Trigger Deploy"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6

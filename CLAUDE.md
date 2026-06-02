@@ -310,6 +310,7 @@ The workflow implements an optimized Go caching strategy based on https://danp.n
 - **SSH Agent**: Conditionally configured only when SSH key provided
 - **Cache Strategy**: Go workflows use date-based cache keys
 - **Role Duration**: Lambda deployments use 900-second role sessions
+- **Job Timeouts**: Every job sets `timeout-minutes` so a hung step fails fast instead of running to GitHub's 6h default. Values are sized at ~2-4x the observed p90/max run time (sampled from real org CI): trivial script/PR jobs 5 min; npm/NuGet/docker build jobs 10-20 min; Cypress/Terraform 30 min. Each workflow exposes an optional `timeout_minutes` input (`type: number`, default = the measured value) wired as `timeout-minutes: ${{ inputs.timeout_minutes }}`, so callers can override per-repo without changing the shared workflow. Only `inputs`/`vars` contexts are valid in that expression (not `secrets`). When adding a new workflow, add the input + timeout. Note: `timeout-minutes` cannot be set on a job that calls a reusable workflow via `uses:` (e.g. `build-deploy-netcore-library.yml`) — there the input is forwarded down to the leaf job inside the called workflow (`build-netcore-library.yml`).
 
 ## Instructions for AI Assistants
 

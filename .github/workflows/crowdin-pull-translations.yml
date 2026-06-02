@@ -3,6 +3,11 @@ name: Crowdin Pull Translations
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 5
       crowdin-download-flags:
         description: 'Additional flags for crowdin download command (e.g., --branch main)'
         type: string
@@ -34,6 +39,7 @@ permissions:
 jobs:
   pull-translations:
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - uses: actions/checkout@v4
         with:

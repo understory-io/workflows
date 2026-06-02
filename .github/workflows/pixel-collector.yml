@@ -3,6 +3,11 @@ name: 'Collect components usage'
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 5
       src_dir:
         type: string
         required: true
@@ -21,6 +26,7 @@ on:
 jobs:
   collect-usage:
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

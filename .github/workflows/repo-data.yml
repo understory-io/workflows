@@ -2,6 +2,12 @@ name: "Extract Repository Data"
 
 on:
   workflow_call:
+    inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 5
     outputs:
       repository_name:
         description: "Base repository name, without organization"
@@ -14,6 +20,7 @@ jobs:
   extract-data:
     name: "Data Setup"
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     outputs:
       repository_name: ${{ steps.set_data.outputs.repo_name }}
       image_tag_prefix: ${{ steps.set_data.outputs.image_tag_prefix }}
