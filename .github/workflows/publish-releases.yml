@@ -1,6 +1,11 @@
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 10
       publish-command:
         type: string
         required: true
@@ -50,7 +55,7 @@ jobs:
       packages: write
       pull-requests: write
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     outputs:
       published: ${{ steps.changesets.outputs.published }}
     steps:

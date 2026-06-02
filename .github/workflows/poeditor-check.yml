@@ -3,6 +3,11 @@ name: "Check that all POEditor Terms are translated"
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 5
       poeditor_project:
         type: string
         required: true
@@ -14,7 +19,7 @@ jobs:
   build:
     name: "Check translations"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - name: Check translation percentage
         id: check_translation_status

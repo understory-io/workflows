@@ -3,6 +3,11 @@ name: "Run all cypress-tests in a project"
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 30
       config_file_path:
         type: string
         required: false
@@ -59,7 +64,7 @@ jobs:
     name: E2E tests
     needs: install
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     container:
       image: ${{ inputs.cypress_image }}
     strategy:

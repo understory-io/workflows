@@ -2,6 +2,11 @@ name: Update release PRs
 on:
   workflow_call:
     inputs:
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 5
       promotionPairs:
         type: string
         required: true
@@ -13,7 +18,7 @@ on:
 jobs:
   release-prs:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     name: Update release PRs
 
     permissions:
