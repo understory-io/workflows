@@ -30,6 +30,7 @@ jobs:
   build:
     name: 'Build & Deploy Service'
     runs-on: ubuntu-latest
+    timeout-minutes: 18
     environment: ${{ inputs.stage }}
     steps:
       - name: Checkout

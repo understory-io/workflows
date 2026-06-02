@@ -14,6 +14,7 @@ jobs:
   extract-data:
     name: "Data Setup"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       repository_name: ${{ steps.set_data.outputs.repo_name }}
       image_tag_prefix: ${{ steps.set_data.outputs.image_tag_prefix }}

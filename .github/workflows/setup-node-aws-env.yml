@@ -15,6 +15,7 @@ jobs:
   build:
     name: "Checkout"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout node-aws-env
         uses: actions/checkout@v6

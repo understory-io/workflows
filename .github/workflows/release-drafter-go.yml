@@ -6,6 +6,7 @@ jobs:
     name: updating draft
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: release-drafter/release-drafter@v7
         with:
@@ -15,6 +16,7 @@ jobs:
     name: autolabel
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: release-drafter/release-drafter/autolabeler@v7
         with:
