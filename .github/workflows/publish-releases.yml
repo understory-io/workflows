@@ -92,9 +92,13 @@ jobs:
         run: npm ci
 
       - name: Configure Git User
+        # Use the github-actions[bot] identity (rather than a synthetic
+        # "Understory Services" email) so external integrations like Vercel
+        # recognise the commit author and don't block branch-protection
+        # checks on the "Version Packages" PR.
         run: |
-          git config --global user.name "Understory Services"
-          git config --global user.email "understory-services@understory.io"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Create Release Pull Request or publish changesets
         id: changesets
