@@ -57,6 +57,9 @@ jobs:
           echo "project_name=$project_name" >> $GITHUB_OUTPUT
           echo "Project name: $project_name"
 
+      - name: Test
+        run: dotnet test --configuration ${{ inputs.buildConfiguration }}
+
       - name: Build and Pack
         if: inputs.versionSuffix != ''
         run: |
