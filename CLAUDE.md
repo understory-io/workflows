@@ -163,7 +163,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
   - `app_dir` (required): path to the app, e.g. "apps/bookings-core"
   - `localstack_image` (optional, default: `localstack/localstack`): allows pinning a specific version
 - **Key Secret**: `go_private_modules_pat`
-- **What it does**: checkout → private Go module config → Mise install → Go cache restore → `go mod download -x` → LocalStack cache/load → `mise local:up` → `mise test` → `mise build` → artifact upload → Go cache save (main only)
+- **What it does**: checkout → Setup Go (`go-version-file` from the app's own go.mod, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download -x` → LocalStack cache/load → `mise local:up` → `mise test` → `mise build` → artifact upload → Go cache save (main only)
 - **Cache key fix**: uses `hashFiles(format('{0}/go.mod', inputs.app_dir))` to correctly hash the subdirectory go.mod (nested `${{ }}` inside `hashFiles()` is not evaluated by GitHub Actions)
 
 ### Utility Workflows
