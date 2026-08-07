@@ -28,6 +28,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Runner images ship an older baked-in Go than what mise.toml/go.mod
+      # pin. mise resolves go:-backend tool versions (e.g. sprt) by shelling
+      # out to `go list -m`, which enforces the current module's go.mod floor
+      # regardless of which module is queried -- on a cold mise cache, that
+      # runs before mise's own pinned go tool has installed, against the
+      # stale runner default, and fails with a misleading "no versions found"
+      # error. Installing a go.mod-satisfying toolchain first removes the
+      # race entirely.
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
       - name: Setup access to private Go modules
         env:
           GO_PRIVATE_MODULES_PAT: ${{ secrets.go-private-modules-pat }}
