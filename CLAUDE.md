@@ -123,6 +123,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - **Purpose**: CI pipeline for Go libraries (Mise-based toolchain)
 - **Trigger**: `workflow_call`
+- **What it does**: checkout → Setup Go (`go-version-file: go.mod`, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download && go mod tidy` → LocalStack cache/load (optional) → `mise run test` → `mise run build` → Go cache save (main only)
 
 ### Testing & Quality Workflows
 
