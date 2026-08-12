@@ -1,0 +1,216 @@
+name: "Terraform"
+
+# Plan on pull requests and comment the result; apply on push.
+#
+# The caller's `on.push.branches` is what decides where apply runs — this
+# workflow applies on any push it receives, so list exactly the deploy
+# branches there.
+
+on:
+  workflow_call:
+    inputs:
+      terraform_version:
+        description: "Terraform CLI version. Must satisfy the HCP Terraform workspace's own version, since `terraform validate` and `fmt` run locally against it."
+        type: string
+        required: true
+      working_directory:
+        description: "Directory holding the root module."
+        type: string
+        required: false
+        default: "."
+      fmt_args:
+        description: "Arguments to `terraform fmt`. Pass `-check -recursive` for repos whose modules live in subdirectories."
+        type: string
+        required: false
+        default: "-check"
+      workspace_map:
+        description: "Newline-separated `branch=workspace` pairs. Matched against the PR base ref on pull requests and the pushed branch otherwise."
+        type: string
+        required: false
+        default: ""
+      workspace_default:
+        description: "Workspace for branches with no `workspace_map` entry. Left empty, TF_WORKSPACE is never set and Terraform uses the workspace named in the backend config."
+        type: string
+        required: false
+        default: ""
+      private_modules:
+        description: "Load the shared deploy key so `terraform init` can git-clone modules from private understory-io repos."
+        type: boolean
+        required: false
+        default: false
+      semgrep:
+        description: "Run a Semgrep scan against `.semgrep.yml`, diffed from the PR base."
+        type: boolean
+        required: false
+        default: false
+      tf_log:
+        description: "TF_LOG level for the apply step. Empty leaves it unset."
+        type: string
+        required: false
+        default: ""
+    secrets:
+      tf_api_token:
+        description: "HCP Terraform API token."
+        required: true
+      github_ssh_key:
+        description: "Deploy key for private Terraform modules. Required when `private_modules` is true."
+        required: false
+
+jobs:
+  terraform:
+    name: "Terraform"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Semgrep diffs against the merge base, which needs full history.
+          # Quoted because a bare 0 is falsy and would collapse to the fallback.
+          fetch-depth: ${{ inputs.semgrep && '0' || '1' }}
+
+      - name: Setup ssh agent (private Terraform modules)
+        if: inputs.private_modules
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.github_ssh_key }}
+
+      # Terraform resolves module sources over https, so rewrite those to ssh
+      # to make them authenticate with the key loaded above.
+      - name: Configure git to fetch github.com over ssh
+        if: inputs.private_modules
+        run: |
+          git config --global url."ssh://git@github.com".insteadOf https://github.com
+          mkdir -p -m 0600 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Semgrep
+        if: inputs.semgrep && github.event_name == 'pull_request'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          python3 -m pip install --quiet semgrep
+          semgrep scan --config .semgrep.yml \
+            --baseline-commit "origin/${{ github.base_ref }}" \
+            --error
+
+      - name: Resolve workspace
+        id: workspace
+        shell: bash
+        env:
+          WORKSPACE_MAP: ${{ inputs.workspace_map }}
+          WORKSPACE_DEFAULT: ${{ inputs.workspace_default }}
+          # A PR plans against the branch it would merge into, not its own head.
+          TARGET_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}
+        run: |
+          name="$WORKSPACE_DEFAULT"
+          while IFS='=' read -r branch workspace; do
+            branch="$(echo "$branch" | tr -d '[:space:]')"
+            workspace="$(echo "$workspace" | tr -d '[:space:]')"
+            if [ -n "$branch" ] && [ "$branch" = "$TARGET_REF" ]; then
+              name="$workspace"
+            fi
+          done <<< "$WORKSPACE_MAP"
+
+          echo "Ref '$TARGET_REF' resolved to workspace '${name:-<backend default>}'"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+          cli_config_credentials_token: ${{ secrets.tf_api_token }}
+
+      - name: Terraform Format
+        id: fmt
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
+          FMT_ARGS: ${{ inputs.fmt_args }}
+        # Deliberately unquoted so multiple arguments word-split.
+        run: terraform fmt $FMT_ARGS
+
+      - name: Terraform Init
+        id: init
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
+        run: terraform init
+
+      - name: Terraform Validate
+        id: validate
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ inputs.working_directory }}
+        # `shell: bash` brings -o pipefail, without which tee would swallow a
+        # failing plan's exit code.
+        shell: bash
+        env:
+          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
+        run: terraform plan -no-color -input=false 2>&1 | tee plan.raw
+        continue-on-error: true
+
+      # State refresh accounts for most of a plan's length and none of its
+      # meaning, so it is dropped before the plan reaches the comment.
+      - name: Filter plan output
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ inputs.working_directory }}
+        shell: bash
+        run: |
+          grep -vE 'Refreshing state\.\.\.|Reading\.\.\.|Read complete after' plan.raw > plan.txt || true
+          echo "Filtered $(wc -l < plan.raw) lines down to $(wc -l < plan.txt)"
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        env:
+          PLAN_PATH: ${{ inputs.working_directory }}/plan.txt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            // Leaves headroom under GitHub's 65536-character comment body limit.
+            const maxPlanChars = 60000;
+
+            let plan = fs.readFileSync(process.env.PLAN_PATH, 'utf8');
+            if (plan.length > maxPlanChars) {
+              // The tail carries the "Plan: N to add" summary, which is the part
+              // worth keeping when the per-resource detail doesn't fit.
+              plan = `[truncated — showing the last ${maxPlanChars} of ${plan.length} characters; see the workflow log for the full plan]\n\n` +
+                plan.slice(-maxPlanChars);
+            }
+
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            <details>
+            <summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+            </details>
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Terraform Apply
+        if: github.event_name == 'push'
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
+          TF_LOG: ${{ inputs.tf_log }}
+        run: terraform apply -auto-approve -input=false
