@@ -61,6 +61,10 @@ steps:
 - **`build-netcore-library`** - Build .NET Core libraries
 - **`build-deploy-netcore-library`** - Build and deploy .NET libraries
 
+#### Infrastructure
+
+- **`terraform`** - Plan on PRs with the result commented back, apply on push
+
 #### Testing & Quality
 
 - **`poeditor-check`** - Validate translations
