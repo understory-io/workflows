@@ -33,6 +33,11 @@ on:
         type: string
         required: false
         default: ""
+      fetch_depth:
+        description: "Checkout depth. Ignored when `semgrep` is on, which needs full history regardless."
+        type: string
+        required: false
+        default: "1"
       private_modules:
         description: "Load the shared deploy key so `terraform init` can git-clone modules from private understory-io repos."
         type: boolean
@@ -66,7 +71,7 @@ jobs:
         with:
           # Semgrep diffs against the merge base, which needs full history.
           # Quoted because a bare 0 is falsy and would collapse to the fallback.
-          fetch-depth: ${{ inputs.semgrep && '0' || '1' }}
+          fetch-depth: ${{ inputs.semgrep && '0' || inputs.fetch_depth }}
 
       - name: Setup ssh agent (private Terraform modules)
         if: inputs.private_modules
