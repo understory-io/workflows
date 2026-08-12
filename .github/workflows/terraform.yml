@@ -96,8 +96,10 @@ jobs:
             --baseline-commit "origin/${{ github.base_ref }}" \
             --error
 
+      # Exported to the environment rather than passed per-step, because an
+      # empty TF_WORKSPACE is not the same as an unset one: a `cloud {}` block
+      # rejects it as an invalid workspace configuration.
       - name: Resolve workspace
-        id: workspace
         shell: bash
         env:
           WORKSPACE_MAP: ${{ inputs.workspace_map }}
@@ -115,7 +117,9 @@ jobs:
           done <<< "$WORKSPACE_MAP"
 
           echo "Ref '$TARGET_REF' resolved to workspace '${name:-<backend default>}'"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          if [ -n "$name" ]; then
+            echo "TF_WORKSPACE=$name" >> "$GITHUB_ENV"
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -127,7 +131,6 @@ jobs:
         id: fmt
         working-directory: ${{ inputs.working_directory }}
         env:
-          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
           FMT_ARGS: ${{ inputs.fmt_args }}
         # Deliberately unquoted so multiple arguments word-split.
         run: terraform fmt $FMT_ARGS
@@ -135,15 +138,11 @@ jobs:
       - name: Terraform Init
         id: init
         working-directory: ${{ inputs.working_directory }}
-        env:
-          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
         run: terraform init
 
       - name: Terraform Validate
         id: validate
         working-directory: ${{ inputs.working_directory }}
-        env:
-          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
         run: terraform validate -no-color
 
       - name: Terraform Plan
@@ -153,8 +152,6 @@ jobs:
         # `shell: bash` brings -o pipefail, without which tee would swallow a
         # failing plan's exit code.
         shell: bash
-        env:
-          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
         run: terraform plan -no-color -input=false 2>&1 | tee plan.raw
         continue-on-error: true
 
@@ -216,6 +213,5 @@ jobs:
         if: github.event_name == 'push'
         working-directory: ${{ inputs.working_directory }}
         env:
-          TF_WORKSPACE: ${{ steps.workspace.outputs.name }}
           TF_LOG: ${{ inputs.tf_log }}
         run: terraform apply -auto-approve -input=false
