@@ -18,11 +18,6 @@ on:
         type: string
         required: false
         default: "."
-      fmt_args:
-        description: "Arguments to `terraform fmt`. Pass `-check -recursive` for repos whose modules live in subdirectories."
-        type: string
-        required: false
-        default: "-check"
       workspace_map:
         description: "Newline-separated `branch=workspace` pairs. Matched against the PR base ref on pull requests and the pushed branch otherwise."
         type: string
@@ -33,11 +28,6 @@ on:
         type: string
         required: false
         default: ""
-      fetch_depth:
-        description: "Checkout depth. Ignored when `semgrep` is on, which needs full history regardless."
-        type: string
-        required: false
-        default: "1"
       private_modules:
         description: "Load the shared deploy key so `terraform init` can git-clone modules from private understory-io repos."
         type: boolean
@@ -71,7 +61,7 @@ jobs:
         with:
           # Semgrep diffs against the merge base, which needs full history.
           # Quoted because a bare 0 is falsy and would collapse to the fallback.
-          fetch-depth: ${{ inputs.semgrep && '0' || inputs.fetch_depth }}
+          fetch-depth: ${{ inputs.semgrep && '0' || '1' }}
 
       - name: Setup ssh agent (private Terraform modules)
         if: inputs.private_modules
@@ -130,10 +120,9 @@ jobs:
       - name: Terraform Format
         id: fmt
         working-directory: ${{ inputs.working_directory }}
-        env:
-          FMT_ARGS: ${{ inputs.fmt_args }}
-        # Deliberately unquoted so multiple arguments word-split.
-        run: terraform fmt $FMT_ARGS
+        # Recursive so module subdirectories are covered too, which every repo
+        # but infrastructure-stripe was previously missing.
+        run: terraform fmt -check -recursive
 
       - name: Terraform Init
         id: init
