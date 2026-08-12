@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.pr-token }}
@@ -71,13 +71,17 @@ jobs:
 
       - name: Setup Node.js
         if: inputs.build-command != ''
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version }}
+          # The node_modules cache below is the only caching this workflow
+          # should do; setup-node's own package-manager cache would otherwise
+          # switch on for any consumer whose package.json sets `packageManager`.
+          package-manager-cache: false
 
       - name: Cache node_modules
         if: inputs.build-command != ''
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache
         with:
           path: node_modules
