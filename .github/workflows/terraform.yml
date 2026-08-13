@@ -178,9 +178,10 @@ jobs:
             }
 
             const marker = process.env.PLAN_MARKER;
-            // The comment is rewritten in place, so this link is the only thing
-            // telling a reader which run produced the plan they are looking at.
+            // The comment is rewritten in place, so the link and stamp below are
+            // the only things telling a reader how fresh the plan they see is.
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const stamp = `${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 
             const output = `${marker}
             #### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
@@ -194,7 +195,8 @@ jobs:
             ${plan}
             \`\`\`
             </details>
-            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\` — [run](${runUrl})*`;
+
+            *Pushed by @${{ github.actor }} · \`${{ github.event_name }}\` · [run](${runUrl}) · ${stamp}*`;
 
             const existing = (await github.paginate(github.rest.issues.listComments, {
               issue_number: context.issue.number,
