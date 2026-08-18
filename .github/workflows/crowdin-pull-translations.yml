@@ -8,6 +8,10 @@ on:
         type: number
         required: false
         default: 5
+      base:
+        description: 'Branch the translations PR targets, and the branch it is cut from. The head branch is named l10n_<base>.'
+        type: string
+        default: 'main'
       crowdin-download-flags:
         description: 'Additional flags for crowdin download command (e.g., --branch main)'
         type: string
@@ -43,6 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.base }}
           fetch-depth: 0
           token: ${{ secrets.pr-token }}
 
@@ -97,23 +102,28 @@ jobs:
 
       - name: Commit and push translations
         id: commit
+        env:
+          BASE: ${{ inputs.base }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin
 
-          git switch -C l10n_main
+          # resolves to l10n_main when base is main, so the nine repos already
+          # on that head branch keep it and their open PRs stay attached
+          head="l10n_$BASE"
+          git switch -C "$head"
 
           # Derive git-add paths from crowdin.yml translation patterns
           add_paths=$(grep 'translation:' crowdin.yml | sed 's/.*translation: *//; s|^/||; s|%[^%]*%.*||; s|/$||' | sort -u | sed 's|$|/|' | tr '\n' ' ')
           git add $add_paths ${{ inputs.extra-git-add-paths }}
 
           if git diff --staged --quiet; then
-            echo "No translation changes compared to main."
+            echo "No translation changes compared to $BASE."
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             git commit -m "chore: sync translations from Crowdin"
-            git push --force-with-lease origin l10n_main
+            git push --force-with-lease origin "$head"
             echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
 
@@ -121,11 +131,12 @@ jobs:
         if: steps.commit.outputs.has_changes == 'true'
         run: |
           gh pr create \
-            --base main \
-            --head l10n_main \
+            --base "$BASE" \
+            --head "l10n_$BASE" \
             --title "New Crowdin translations" \
             --body "Automated translations sync from Crowdin" \
           || echo "PR already exists"
-          gh pr merge l10n_main --auto --squash
+          gh pr merge "l10n_$BASE" --auto --squash
         env:
+          BASE: ${{ inputs.base }}
           GITHUB_TOKEN: ${{ secrets.pr-token }}
