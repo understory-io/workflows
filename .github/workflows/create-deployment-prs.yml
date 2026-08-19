@@ -65,13 +65,9 @@ jobs:
           git fetch origin ${{ github.ref_name }}:${{ github.ref_name }}
           git reset --hard ${{ github.ref_name }}
 
-      # Between the reset and the pull request on purpose: `create-pull-request` commits whatever is
-      # dirty in the working tree, so this is the only place a generated artefact can reach the
-      # promotion without a second push — and a second push would advance the head sha after a
-      # required status had already been posted on it.
-      #
-      # The command comes from the calling workflow, which is trusted: only someone who can already
-      # run arbitrary code in that repository's Actions can set it.
+      # Between the reset and the pull request because `create-pull-request` commits whatever is dirty:
+      # a second push would move the head sha out from under a status already posted on it. The command
+      # is trusted — only someone who can already run code in the caller's Actions can set it.
       - name: Install Mise
         if: inputs.prepare_command != ''
         uses: jdx/mise-action@v4
