@@ -66,8 +66,7 @@ jobs:
           git reset --hard ${{ github.ref_name }}
 
       # Between the reset and the pull request because `create-pull-request` commits whatever is dirty:
-      # a second push would move the head sha out from under a status already posted on it. The command
-      # is trusted — only someone who can already run code in the caller's Actions can set it.
+      # a second push would move the head sha out from under a status already posted on it.
       - name: Install Mise
         if: inputs.prepare_command != ''
         uses: jdx/mise-action@v4
