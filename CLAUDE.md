@@ -143,6 +143,8 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - **Purpose**: Automatically update release pull requests
 - **Trigger**: `workflow_call`
+- **Key Inputs**: `promotionPairs` (required), `prepare_command` (optional)
+- **Note**: `prepare_command` runs a mise task after the branch is reset to the source branch and before the PR is created, so anything it writes is committed with the promotion. Used by `whatsapp-templates` to generate its consumer API only on a commit that has passed the approval gate.
 
 #### 11. publish-releases (`publish-releases.yml`)
 
