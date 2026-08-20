@@ -143,8 +143,9 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - **Purpose**: Automatically update release pull requests
 - **Trigger**: `workflow_call`
-- **Key Inputs**: `promotionPairs` (required), `prepare_command` (optional)
+- **Key Inputs**: `promotionPairs` (required), `prepare_command` (optional), `record_target_ancestry` (optional)
 - **Note**: `prepare_command` runs a mise task after the branch is reset to the source branch and before the PR is created, so anything it writes is committed with the promotion. Used by `whatsapp-templates` to generate its consumer API only on a commit that has passed the approval gate.
+- **Note**: `record_target_ancestry` merges the target into the promotion branch with `--strategy=ours` right after the reset, giving the promotion head the target as a parent without changing its tree. Without it the merge base is the previous promotion, so whatever `prepare_command` generated last cycle conflicts add/add with this cycle's. Off by default, because `--strategy=ours` would revert a hotfix committed straight to the target. The checkout is unconditionally full-depth: at depth 1 the merge sees unrelated histories.
 
 #### 11. publish-releases (`publish-releases.yml`)
 
