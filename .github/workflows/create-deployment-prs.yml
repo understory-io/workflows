@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         description: "Mise task run after the reset and before the pull request, so whatever it writes is committed with the promotion (e.g. code generation)"
+      record_target_ancestry:
+        type: boolean
+        required: false
+        default: false
+        description: "Give the promotion branch the target branch as a second parent while keeping the source tree byte-for-byte. Set this when the target carries content the source never sees — a file the promotion itself generates — which otherwise conflicts on every cycle. Reverts anything committed straight to the target"
     secrets:
       token:
         required: true
@@ -59,11 +64,30 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+          # At the action's default depth of 1 the ancestry merge below sees unrelated histories.
+          fetch-depth: 0
 
       - name: Reset ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }} promotion branch
         run: |
           git fetch origin ${{ github.ref_name }}:${{ github.ref_name }}
           git reset --hard ${{ github.ref_name }}
+
+      # Without this the merge base is the previous promotion, so last cycle's `prepare_command`
+      # output conflicts add/add with this one's. `--strategy=ours` keeps the tree the source's.
+      - name: Record ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }} as an ancestor
+        if: inputs.record_target_ancestry
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          TARGET_BRANCH: ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
+        run: |
+          set -euo pipefail
+
+          # The runner has no git identity, and a merge commit needs one. Borrow create-pull-request's.
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              merge --strategy=ours --no-edit \
+              -m "Record $TARGET_BRANCH as an ancestor of $SOURCE_BRANCH" \
+              "origin/$TARGET_BRANCH"
 
       # Between the reset and the pull request because `create-pull-request` commits whatever is dirty:
       # a second push would move the head sha out from under a status already posted on it.
