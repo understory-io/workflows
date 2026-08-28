@@ -41,7 +41,16 @@ jobs:
         id: scan
         run: |
           output=$(npx --yes @understory-io/scan-imports@v1.2.0 scan -d ${{ inputs.src_dir }} -i ${{ inputs.package_match_pattern }} --regex -ext .tsx,.ts -f json)
+          echo "$output"
           filename=$(echo "$output" | sed -n 's/^Outputting .* to \(.*\.json\)$/\1/p')
+          # The scanner writes nothing when it finds no imports. An app that has
+          # finished migrating off a package still needs to report, so that the
+          # collected series drops to zero rather than resting on its last
+          # non-zero reading.
+          if [ -z "$filename" ]; then
+            filename=no-usage.json
+            echo '{}' > "$filename"
+          fi
           echo "filename=$filename" >> $GITHUB_OUTPUT
 
       - name: POST collected metrics to API
