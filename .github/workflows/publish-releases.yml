@@ -63,6 +63,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ssh-key: ${{ secrets.github_ssh_key }}
+          fetch-depth: 2
 
       - name: Setup access to private Go modules
         env:
@@ -92,27 +93,74 @@ jobs:
         run: npm ci
 
       - name: Configure Git User
-        # Use the github-actions[bot] identity (rather than a synthetic
-        # "Understory Services" email) so external integrations like Vercel
-        # recognise the commit author and don't block branch-protection
-        # checks on the "Version Packages" PR.
+        # Repos that set `commit: true` in .changeset/config.json have the CLI
+        # commit the version bump itself, and git refuses to commit without an
+        # identity. The action pushes through the GitHub API, so what lands on
+        # the branch is attributed to the token owner regardless of this.
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Create Release Pull Request or publish changesets
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2.1.1
         with:
           # This expects you to have a script called release which does a build for your packages and calls changeset publish
-          publish: ${{ inputs.publish-command }}
-          commit: ${{ inputs.commit-message }}
-          title: ${{ inputs.pull-request-title }}
-          setupGitUser: false
+          publish-script: ${{ inputs.publish-command }}
+          commit-message: ${{ inputs.commit-message }}
+          pr-title: ${{ inputs.pull-request-title }}
+          github-token: ${{ secrets.changeset-github-token }}
         env:
-          GITHUB_TOKEN: ${{ secrets.changeset-github-token }}
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the release reached the registry
+        # The action reports `published: false` both when there was nothing to
+        # publish and when it could not read the publish result at all — with a
+        # custom publish script the latter is only a warning, so a release can
+        # reach the registry, skip everything gated on the output, and still
+        # report green. Any version this commit bumped must therefore resolve.
+        if: steps.changesets.outputs.published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if ! git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
+            echo "No previous commit to compare against; nothing to verify."
+            exit 0
+          fi
+
+          missing=""
+          for file in $(git diff --name-only 'HEAD^' HEAD -- '*/package.json' 'package.json'); do
+            [ -f "$file" ] || continue
+
+            entry=$(jq -r 'select((.private | not) and .name and .version) | "\(.name) \(.version)"' "$file")
+            [ -n "$entry" ] || continue
+            name=${entry%% *}
+            version=${entry##* }
+
+            # A package added in this commit has no previous version to compare.
+            previous=$(git show "HEAD^:$file" 2>/dev/null | jq -r '.version // ""') || previous=""
+            [ "$version" != "$previous" ] || continue
+
+            # A package the registry cannot resolve at all is an access problem,
+            # not a missed publish, and must not turn a quiet run red.
+            if ! published=$(npm view "$name" versions --json 2>/dev/null); then
+              echo "::warning::Could not read $name from the registry; skipping."
+              continue
+            fi
+
+            # `npm view` yields a bare string when only one version exists.
+            if [ "$(jq --arg v "$version" '[.] | flatten | any(. == $v)' <<<"$published")" != "true" ]; then
+              missing="$missing  $name@$version"$'\n'
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::This commit bumped versions that never reached the registry, but the release reported nothing published:"
+            printf '%s' "$missing"
+            exit 1
+          fi
 
       - name: Extract release notes
         if: steps.changesets.outputs.published == 'true'
@@ -142,7 +190,7 @@ jobs:
 
             # Append the formatted notes to the releasesNotes
             releasesNotes="${releasesNotes}\n*$tag*:\n\n${escapedNotes}\n\n"
-          done < <(echo '${{ steps.changesets.outputs.publishedPackages }}' | jq -c '.[]')
+          done < <(echo '${{ steps.changesets.outputs['published-packages'] }}' | jq -c '.[]')
 
           # Use the multiline syntax to export RELEASES_NOTES
           echo "RELEASES_NOTES<<EOF" >> $GITHUB_ENV
