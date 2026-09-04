@@ -7,7 +7,7 @@ on:
         description: "Max minutes before the job is cancelled (override the measured default)"
         type: number
         required: false
-        default: 18
+        default: 25
       stage:
         type: string
         required: true
