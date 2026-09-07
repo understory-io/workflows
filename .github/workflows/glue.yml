@@ -59,12 +59,19 @@ jobs:
           path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
+      # The cache holds node-aws-env's compiled output, so it has to be keyed on the
+      # commit that produced it. The lockfile hash alone would serve stale code after
+      # any source change that leaves dependencies untouched.
+      - name: Resolve node-aws-env revision
+        id: node-aws-env-rev
+        run: echo "sha=$(git -C ./node-aws-env rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Restore node-aws-env cache
         id: restore-node-aws-env-cache
         uses: actions/cache/restore@v5
         with:
           path: './node-aws-env'
-          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ steps.node-aws-env-rev.outputs.sha }}
 
       - uses: webfactory/ssh-agent@v0.10.0
         with:
@@ -81,11 +88,15 @@ jobs:
           cache-dependency-path: '**/package-lock.json'
           scope: '@understory-io'
 
+      # Installed once, outside the cache-gated step, because Build and Test need
+      # these whether or not node-aws-env came back from the cache.
+      - name: Install global build tools
+        run: npm install -g typescript@5.8.3 eslint@8.57.0 mocha@10.4.0
+
       - name: Install & Setup node-aws-env
         if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
         run: |
           cd ./node-aws-env
-          npm install -g typescript@5.8.3 eslint@8.57.0 mocha@10.4.0
           npm install
           tsc
 
@@ -95,7 +106,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: './node-aws-env'
-          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ steps.node-aws-env-rev.outputs.sha }}
 
       - name: Configure AWS credentials
         id: aws
@@ -111,8 +122,7 @@ jobs:
       - name: Install project dependencies
         run: |
           cd ./checkout${{ inputs.api_dir }}
-          npm install -g typescript@5.8.3 eslint@8.57.0 mocha@10.4.0
-          npm install
+          npm ci
 
       - name: Build
         run: |
@@ -133,6 +143,15 @@ jobs:
           mocha
 
       - name: Deploy
+        id: deploy
         run: |
           cd ./checkout${{ inputs.api_dir }}
           node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json --path ${{ github.workspace }}/checkout${{ inputs.api_dir }}
+
+      # A timeout-minutes cancellation surfaces as CANCELLED with Build and Test
+      # green, so a cut deploy reads as bad luck instead of an undeployed change —
+      # and whoever verifies it then tests the previous code.
+      - name: Warn that the environment was not updated
+        if: cancelled() && steps.deploy.outcome != 'success'
+        run: |
+          echo "::error title=Deploy did not complete::${{ inputs.stage }} still runs the previous code. This job was cancelled (timeout_minutes is ${{ inputs.timeout_minutes }}) before Deploy finished, so nothing was deployed. Re-run it before verifying anything."
