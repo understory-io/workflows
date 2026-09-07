@@ -59,12 +59,19 @@ jobs:
           path: './node-aws-env'
           ssh-key: ${{ secrets.hb_github_ssh_key }}
 
+      # The cache holds node-aws-env's compiled output, so it has to be keyed on the
+      # commit that produced it. The lockfile hash alone would serve stale code after
+      # any source change that leaves dependencies untouched.
+      - name: Resolve node-aws-env revision
+        id: node-aws-env-rev
+        run: echo "sha=$(git -C ./node-aws-env rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Restore node-aws-env cache
         id: restore-node-aws-env-cache
         uses: actions/cache/restore@v5
         with:
           path: './node-aws-env'
-          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ steps.node-aws-env-rev.outputs.sha }}
 
       - uses: webfactory/ssh-agent@v0.10.0
         with:
@@ -99,7 +106,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: './node-aws-env'
-          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ steps.node-aws-env-rev.outputs.sha }}
 
       - name: Configure AWS credentials
         id: aws
