@@ -95,7 +95,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: './node-aws-env'
-          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env
+          key: ${{ hashFiles('node-aws-env/package-lock.json') }}-node-aws-env-${{ inputs.node_aws_env_ref }}
 
       - name: Configure AWS credentials
         id: aws
@@ -133,6 +133,15 @@ jobs:
           mocha
 
       - name: Deploy
+        id: deploy
         run: |
           cd ./checkout${{ inputs.api_dir }}
           node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json --path ${{ github.workspace }}/checkout${{ inputs.api_dir }}
+
+      # A timeout-minutes cancellation surfaces as CANCELLED with Build and Test
+      # green, so a cut deploy reads as bad luck instead of an undeployed change —
+      # and whoever verifies it then tests the previous code.
+      - name: Warn that the environment was not updated
+        if: cancelled() && steps.deploy.outcome != 'success'
+        run: |
+          echo "::error title=Deploy did not complete::${{ inputs.stage }} still runs the previous code. This job was cancelled (timeout_minutes is ${{ inputs.timeout_minutes }}) before Deploy finished, so nothing was deployed. Re-run it before verifying anything."
