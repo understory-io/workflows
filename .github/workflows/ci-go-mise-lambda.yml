@@ -106,10 +106,26 @@ jobs:
         env:
           GOFLAGS: "-mod=readonly"
 
+      # service.version is what lets telemetry say which commit served a request. Without it
+      # every deployed Lambda reports faas.version="$LATEST" forever, because
+      # update-function-code mutates $LATEST in place and never publishes a version.
+      #
+      # Injected at link time into go-uobservability rather than set as a Lambda environment
+      # variable: those are Terraform-managed (modules/otel-env owns
+      # OTEL_RESOURCE_ATTRIBUTES), so a deploy-time write drifts and is reverted by the next
+      # apply. The -X path targets the shared library, not each repo's main package, which is
+      # why this one line covers every consumer and needs no per-repo mise.toml change.
+      #
+      # Go would stamp vcs.revision by itself and none of this would be needed — but only when
+      # the build targets a package. `mise build` runs `go build ... main.go`, and a file list
+      # carries no VCS information at all; -buildvcs=true does not override that.
+      #
+      # Appended to the existing GOFLAGS, not replacing it: dropping -mod=readonly here would
+      # let a build quietly rewrite go.mod.
       - name: Build Lambda binary
         run: cd ${{ inputs.app_dir }} && mise build
         env:
-          GOFLAGS: "-mod=readonly"
+          GOFLAGS: "-mod=readonly -ldflags=-X=github.com/understory-io/go-uobservability.buildRevision=${{ github.sha }}"
 
       - name: Archive build artifacts
         uses: actions/upload-artifact@v7
