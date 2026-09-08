@@ -125,17 +125,11 @@ jobs:
         run: |
           aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo }}:${{ needs.build.outputs.image_tag }}
 
-      # update-function-code mutates $LATEST in place and never publishes a version, so the
-      # runtime has no idea which build it is: every Lambda reports faas.version=$LATEST
-      # forever, and no image tag, commit or deployment id reaches telemetry. The practical
-      # cost is that a request cannot be attributed to a build — during a rollout, warm
-      # containers serve the old image alongside the new one and nothing on the request says
-      # which. "Is this error new, or was it already there?" is currently unanswerable.
-      #
-      # service.version is the OTel convention for this and is already honoured: the shared Go
-      # setup (understory-io/go-uobservability, resource.go) builds its resource with
-      # resource.WithFromEnv() and sets no service.version of its own, so the env var lands
-      # unopposed. The Node and .NET SDKs read the same variable by default.
+      # A deployed Lambda cannot currently be tied to a commit: update-function-code mutates
+      # $LATEST in place and never publishes a version, so faas.version is always "$LATEST"
+      # and no commit or image tag reaches telemetry. service.version is the OTel convention
+      # for this, and go-uobservability already builds its resource with resource.WithFromEnv(),
+      # so an env var is all it takes.
       - name: Stamp service.version with the commit SHA
         env:
           FN: ${{ inputs.aws_function_name }}
@@ -145,25 +139,34 @@ jobs:
         run: |
           set -euo pipefail
 
-          # update-function-code is asynchronous. A configuration update issued while it is
-          # still settling is rejected with ResourceConflictException.
+          # The code update above is asynchronous, and a config update during it is rejected.
           aws lambda wait function-updated --function-name "$FN"
 
-          # --environment REPLACES the entire Variables map rather than merging into it, so the
-          # current map has to be read back or this step silently deletes every other env var
-          # on the function. Within OTEL_RESOURCE_ATTRIBUTES the same applies to sibling
-          # attributes: drop only a previous service.version and keep the rest.
-          current="$(aws lambda get-function-configuration --function-name "$FN" \
+          # The function's current variables. "null" when it has none set.
+          old_env="$(aws lambda get-function-configuration --function-name "$FN" \
                        --query 'Environment.Variables' --output json)"
 
-          merged="$(printf '%s' "$current" | jq -c --arg sha "$SHA" '
-            (. // {}) as $env
-            | (($env["OTEL_RESOURCE_ATTRIBUTES"] // "")
-               | split(",")
-               | map(select(length > 0 and (startswith("service.version=") | not)))) as $keep
-            | $env + { OTEL_RESOURCE_ATTRIBUTES: (($keep + ["service.version=" + $sha]) | join(",")) }
+          # The OTel attributes we are NOT responsible for: everything except a service.version
+          # left behind by an earlier deploy.
+          other_attrs="$(printf '%s' "$old_env" | jq -r '
+            (.OTEL_RESOURCE_ATTRIBUTES // "")
+            | split(",")
+            | map(select(. != "" and (startswith("service.version=") | not)))
+            | join(",")
           ')"
 
+          # Put ours back alongside them.
+          if [ -n "$other_attrs" ]; then
+            new_attrs="$other_attrs,service.version=$SHA"
+          else
+            new_attrs="service.version=$SHA"
+          fi
+
+          # --environment REPLACES the whole variable map instead of merging into it, so every
+          # other variable has to be carried across or this step deletes them.
+          new_env="$(printf '%s' "$old_env" | jq -c --arg attrs "$new_attrs" \
+                       '(. // {}) + {OTEL_RESOURCE_ATTRIBUTES: $attrs}')"
+
           aws lambda update-function-configuration --function-name "$FN" \
-            --environment "$(jq -nc --argjson v "$merged" '{Variables: $v}')" > /dev/null
+            --environment "$(jq -nc --argjson vars "$new_env" '{Variables: $vars}')" > /dev/null
           aws lambda wait function-updated --function-name "$FN"
