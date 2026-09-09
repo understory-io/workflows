@@ -79,3 +79,17 @@ runs:
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}${{ github.run_number }}
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
         ssh: ${{ inputs.ssh_key != '' && format('default={0}', env.SSH_AUTH_SOCK) || '' }}
+
+    # A stamp that silently goes missing is worse than no stamp, since a missing
+    # service.version is indistinguishable from a healthy one in Dash0. Warns rather than
+    # fails while repos are still being migrated.
+    - name: Verify the image reports its revision
+      shell: bash
+      run: |
+        ref="${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}"
+        config=$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>/dev/null || true)
+        if grep -q "BUILD_REVISION=${{ github.sha }}" <<<"$config"; then
+          echo "::notice::image reports BUILD_REVISION=${{ github.sha }}"
+        else
+          echo "::warning::image does not report BUILD_REVISION=${{ github.sha }}, so service.version will be missing from its telemetry. Add 'ARG BUILD_REVISION=unknown' and 'ENV BUILD_REVISION=\$BUILD_REVISION' to the final stage of the Dockerfile."
+        fi
