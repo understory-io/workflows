@@ -53,6 +53,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: ${{ inputs.app_dir }}/go.mod
+          # The restore/save pair below owns these directories; setup-go's own
+          # cache extracts over them and keys on a Go version mise replaces.
+          cache: false
 
       - name: Configure access to private Go modules
         env:
