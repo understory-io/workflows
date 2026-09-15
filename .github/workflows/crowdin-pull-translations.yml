@@ -35,10 +35,16 @@ on:
         required: true
       pr-token:
         required: true
+      npm-token:
+        # The job token only reaches packages that have granted the calling
+        # repository access, one package at a time; a read-only org token
+        # covers a consumer whose lockfile pulls several of them.
+        required: false
 
 permissions:
   contents: write
   pull-requests: write
+  packages: read
 
 jobs:
   pull-translations:
@@ -83,6 +89,10 @@ jobs:
           # should do; setup-node's own package-manager cache would otherwise
           # switch on for any consumer whose package.json sets `packageManager`.
           package-manager-cache: false
+          # A consumer's lockfile resolves @understory-io packages to GitHub
+          # Packages, which serves them to no one unauthenticated.
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@understory-io'
 
       - name: Cache node_modules
         if: inputs.build-command != ''
@@ -95,6 +105,8 @@ jobs:
       - name: Install dependencies
         if: inputs.build-command != '' && steps.cache.outputs.cache-hit != 'true'
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.npm-token || secrets.GITHUB_TOKEN }}
 
       - name: Build
         if: inputs.build-command != ''
