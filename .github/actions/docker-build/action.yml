@@ -69,6 +69,10 @@ runs:
         target: ${{ inputs.target }}
         platforms: ${{ inputs.platform }}
         provenance: false
+        # Lets the image report service.version in telemetry. Baked into the image because
+        # Terraform owns the function's env vars and does not re-apply on deploy.
+        build-args: |
+          BUILD_REVISION=${{ github.sha }}
         push: true
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
