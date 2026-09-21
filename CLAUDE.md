@@ -131,6 +131,9 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - **Purpose**: Verify all POEditor terms are translated
 - **Use Case**: Internationalization validation
+- **Optional Inputs**:
+  - `ignore_languages`: Pipe-separated POEditor language names to leave out of the
+    check (e.g. `French|Polish`), for languages the project tracks but does not ship
 
 #### 9. crowdin-pull-translations (`crowdin-pull-translations.yml`)
 
