@@ -28,6 +28,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # semgrep --test passes a rules file that has no fixtures at all.
+      - name: Require fixtures for every rules file
+        run: |
+          missing=0
+          for rules in semgrep/*.yml; do
+            if ! ls "${rules%.yml}".* 2>/dev/null | grep -qv '\.yml$'; then
+              echo "::error file=$rules::no fixture file beside $rules"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Test rules against fixtures
         run: |
           python3 -m pip install --quiet semgrep

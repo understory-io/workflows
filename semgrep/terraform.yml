@@ -5,7 +5,8 @@
 # This repo is public: rule messages are world-readable, so they teach the
 # failure mode without naming internal systems.
 #
-# Tests live in semgrep/tests/ and run with `semgrep --test semgrep/`.
+# Fixtures for each rules file sit beside it with the same basename
+# (terraform.yml -> terraform.tf). Run them with `semgrep --test semgrep/`.
 rules:
   - id: aws-ami-must-be-pinned
     message: >-
@@ -55,6 +56,7 @@ rules:
           - pattern-either:
               - pattern: image_id = "$REF"
               - pattern: ami = "$REF"
+              - pattern: ami_id = "$REF"
           - metavariable-regex:
               metavariable: $REF
               regex: ^resolve:ssm:/aws/service/

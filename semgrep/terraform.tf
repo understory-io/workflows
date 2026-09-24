@@ -66,6 +66,12 @@ resource "aws_launch_template" "resolved_at_launch" {
   image_id = "resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id"
 }
 
+resource "aws_imagebuilder_image_recipe" "resolved_ami_id" {
+  name = "floating"
+  # ruleid: aws-ami-must-be-pinned
+  ami_id = "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
 # --- Pinned: must not be flagged -------------------------------------------
 
 resource "aws_launch_template" "pinned" {

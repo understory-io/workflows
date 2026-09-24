@@ -102,9 +102,12 @@ jobs:
           echo "Shared rules from ${{ job.workflow_repository || 'understory-io/workflows' }}@${{ job.workflow_sha || 'main' }}"
           python3 -m pip install --quiet semgrep
           configs=(--config "$GITHUB_WORKSPACE/.understory-workflows/semgrep/terraform.yml")
-          # A repo's own rules are optional; most have none.
+          # A repo's own rules are optional; most have none. Looked for next
+          # to the root module first, then at the repo root.
           if [ -f .semgrep.yml ]; then
             configs+=(--config .semgrep.yml)
+          elif [ -f "$GITHUB_WORKSPACE/.semgrep.yml" ]; then
+            configs+=(--config "$GITHUB_WORKSPACE/.semgrep.yml")
           fi
           semgrep scan "${configs[@]}" \
             --baseline-commit "origin/${{ github.base_ref }}" \
