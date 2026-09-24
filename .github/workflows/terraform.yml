@@ -34,7 +34,7 @@ on:
         required: false
         default: false
       semgrep:
-        description: "Run a Semgrep scan against `.semgrep.yml`, diffed from the PR base."
+        description: "Run a Semgrep scan, diffed from the PR base, with this repo's shared rules (`semgrep/terraform.yml`) plus the caller's `.semgrep.yml` if it has one."
         type: boolean
         required: false
         default: false
@@ -63,6 +63,23 @@ jobs:
           # Quoted because a bare 0 is falsy and would collapse to the fallback.
           fetch-depth: ${{ inputs.semgrep && '0' || '1' }}
 
+      # The shared rules come from the commit of this workflow the caller
+      # resolved, not from main, so a caller pinned to a sha gets rules that
+      # match it. The fallbacks cover runners without the job.workflow_*
+      # context. Sparse, because semgrep/ also holds .tf test fixtures that
+      # must not land in the caller's tree to be scanned or fmt-checked.
+      # Ahead of the ssh rewrite below, which would send this clone over ssh
+      # with a deploy key that only opens the private module repos.
+      - name: Checkout shared Semgrep rules
+        if: inputs.semgrep && github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: semgrep/terraform.yml
+          sparse-checkout-cone-mode: false
+
       - name: Setup ssh agent (private Terraform modules)
         if: inputs.private_modules
         uses: webfactory/ssh-agent@v0.10.0
@@ -80,9 +97,16 @@ jobs:
       - name: Semgrep
         if: inputs.semgrep && github.event_name == 'pull_request'
         working-directory: ${{ inputs.working_directory }}
+        shell: bash
         run: |
+          echo "Shared rules from ${{ job.workflow_repository || 'understory-io/workflows' }}@${{ job.workflow_sha || 'main' }}"
           python3 -m pip install --quiet semgrep
-          semgrep scan --config .semgrep.yml \
+          configs=(--config "$GITHUB_WORKSPACE/.understory-workflows/semgrep/terraform.yml")
+          # A repo's own rules are optional; most have none.
+          if [ -f .semgrep.yml ]; then
+            configs+=(--config .semgrep.yml)
+          fi
+          semgrep scan "${configs[@]}" \
             --baseline-commit "origin/${{ github.base_ref }}" \
             --error
 

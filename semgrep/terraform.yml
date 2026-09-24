@@ -1,0 +1,60 @@
+# Semgrep rules shared by every repo that calls .github/workflows/terraform.yml
+# with `semgrep: true`. They run in addition to the calling repo's own
+# .semgrep.yml, if it has one.
+#
+# This repo is public: rule messages are world-readable, so they teach the
+# failure mode without naming internal systems.
+#
+# Tests live in semgrep/tests/ and run with `semgrep --test semgrep/`.
+rules:
+  - id: aws-ami-must-be-pinned
+    message: >-
+      This AMI floats. It re-resolves on every plan, so when the owner
+      publishes a new image the id changes underneath you: an aws_instance is
+      destroyed and recreated, and a launch template gets a new version that an
+      ASG tracking $Latest uses for its next instance — after a failed health
+      check, an AZ rebalance or an instance refresh — on an image nobody
+      reviewed. With max_size = 1 there is nothing to roll through, so that is
+      an outage, not an upgrade. Pin the AMI id the instance is running TODAY
+      (not the newest one: pinning to the newest cuts a new version and arms
+      the very replacement you are preventing), and record which image and when
+      alongside, e.g. `image_id = "ami-0abc..." # al2023-ami-ecs-hvm-2023.0.20260901,
+      pinned 2026-09-24`. Upgrading is then a deliberate commit. If the data
+      source is only kept as a lookup for choosing the next pin, delete it and
+      leave the `aws ec2 describe-images` query in a comment: left in the
+      config it is one `data.aws_ami.<name>.id` away from floating again. Where
+      floating is intended (e.g. an ASG with spare capacity and an instance
+      refresh you want), suppress with `# nosemgrep: aws-ami-must-be-pinned`
+      on the flagged line and document the reason alongside.
+    severity: ERROR
+    languages: [terraform]
+    pattern-either:
+      # `most_recent` exists precisely to float. Only an explicit `false` is
+      # safe; a variable could be true. The match is the attribute rather than
+      # the block, so editing elsewhere in the block does not re-report it
+      # under --baseline-commit.
+      - patterns:
+          - pattern-inside: |
+              data "aws_ami" $NAME {
+                ...
+              }
+          - pattern: most_recent = $VALUE
+          - pattern-not: most_recent = false
+      # AWS's public "latest AMI" parameters float the same way.
+      - patterns:
+          - pattern-inside: |
+              data "aws_ssm_parameter" $NAME {
+                ...
+              }
+          - pattern: name = "$PARAM"
+          - metavariable-regex:
+              metavariable: $PARAM
+              regex: ^/aws/service/.*(ami|image)
+      # ...including when a launch template resolves one at launch time.
+      - patterns:
+          - pattern-either:
+              - pattern: image_id = "$REF"
+              - pattern: ami = "$REF"
+          - metavariable-regex:
+              metavariable: $REF
+              regex: ^resolve:ssm:/aws/service/
