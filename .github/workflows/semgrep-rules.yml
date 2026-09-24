@@ -1,0 +1,46 @@
+name: "Semgrep rules"
+
+# Runs the fixtures in semgrep/ against the shared rules, so a rule that
+# quietly matches nothing fails here rather than shipping to every
+# infrastructure repo.
+
+on:
+  pull_request:
+    paths:
+      - "semgrep/**"
+      - ".github/workflows/semgrep-rules.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "semgrep/**"
+      - ".github/workflows/semgrep-rules.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "Test"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # semgrep --test passes a rules file that has no fixtures at all.
+      - name: Require fixtures for every rules file
+        run: |
+          missing=0
+          for rules in semgrep/*.yml; do
+            if ! ls "${rules%.yml}".* 2>/dev/null | grep -qv '\.yml$'; then
+              echo "::error file=$rules::no fixture file beside $rules"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Test rules against fixtures
+        run: |
+          python3 -m pip install --quiet semgrep
+          semgrep --test semgrep/

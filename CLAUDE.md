@@ -185,6 +185,14 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: Collect component/package usage metrics
 - **Trigger**: `workflow_call`
 
+#### 16. terraform (`terraform.yml`)
+
+- **Purpose**: Plan on PRs with the result commented back, apply on push, for every infrastructure repo
+- **Trigger**: `workflow_call`
+- **Semgrep (`semgrep: true`)**: on pull requests only, checks out `semgrep/terraform.yml` from `${{ job.workflow_repository }}@${{ job.workflow_sha }}` (sparse, into `.understory-workflows/`; falls back to `understory-io/workflows@main` if the `job.workflow_*` context is empty; must stay ahead of the private-modules ssh rewrite) and scans with it plus the caller's `.semgrep.yml` when that file exists (next to `working_directory` first, then the repo root). Diff-scoped with `--baseline-commit origin/<base>`, so only new findings fail a PR. Rules repo is public: rule messages must not describe internal systems.
+- **Rule tests**: `semgrep-rules.yml` (this repo's own CI, not `workflow_call`) runs `semgrep --test semgrep/` on PRs touching `semgrep/`, and fails if a rules file has no fixture beside it (`semgrep --test` alone passes that). Every rule needs `# ruleid:` and `# ok:` fixtures in `semgrep/terraform.tf`.
+- **Blast radius**: `@main` is what every caller pins, so a change here reaches all semgrep-enabled repos on their next PR.
+
 ## Usage Patterns
 
 ### Calling a Reusable Workflow

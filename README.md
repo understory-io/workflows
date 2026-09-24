@@ -63,7 +63,23 @@ steps:
 
 #### Infrastructure
 
-- **`terraform`** - Plan on PRs with the result commented back, apply on push
+- **`terraform`** - Plan on PRs with the result commented back, apply on push. With `semgrep: true` it also lints the PR diff against the shared rules in [`semgrep/terraform.yml`](semgrep/terraform.yml) plus the calling repo's `.semgrep.yml`, if any.
+
+### 🔍 Shared Semgrep rules
+
+[`semgrep/terraform.yml`](semgrep/terraform.yml) holds Terraform lint rules every infrastructure repo gets through the `terraform` workflow. Fixtures sit beside it in `semgrep/terraform.tf`; add a `# ruleid:` and an `# ok:` case for every rule and run:
+
+```bash
+semgrep --test semgrep/
+```
+
+To run the shared rules from a laptop, in any Terraform repo:
+
+```bash
+semgrep scan --config https://raw.githubusercontent.com/understory-io/workflows/main/semgrep/terraform.yml
+```
+
+CI fetches the rules at the exact commit of the workflow the caller resolved, and scans only what the PR changed (`--baseline-commit`), so existing findings do not fail a PR that did not touch them. Leave out `--baseline-commit`, as above, to see the whole backlog.
 
 #### Testing & Quality
 
