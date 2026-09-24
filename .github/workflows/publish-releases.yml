@@ -204,7 +204,7 @@ jobs:
 
       - name: Notify Slack
         if: steps.changesets.outputs.published == 'true'
-        uses: slackapi/slack-github-action@v3.0.1
+        uses: slackapi/slack-github-action@v4.0.0
         env:
           RELEASES_NOTES: ${{ env.RELEASES_NOTES }}
         with:
