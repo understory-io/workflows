@@ -119,10 +119,27 @@ jobs:
           role-session-name: Github-Actions-Glue-Session
           role-duration-seconds: 3600
 
+      # npm ci deletes node_modules before installing, so only an exact lockfile match
+      # can stand in for it; anything else falls through to a clean install.
+      - name: Restore project dependencies
+        id: restore-project-deps
+        uses: actions/cache/restore@v5
+        with:
+          path: './checkout${{ inputs.api_dir }}/node_modules'
+          key: project-deps-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles(format('checkout{0}/package-lock.json', inputs.api_dir)) }}
+
       - name: Install project dependencies
+        if: steps.restore-project-deps.outputs.cache-hit != 'true'
         run: |
           cd ./checkout${{ inputs.api_dir }}
           npm ci
+
+      - name: Save project dependencies
+        if: steps.restore-project-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: './checkout${{ inputs.api_dir }}/node_modules'
+          key: ${{ steps.restore-project-deps.outputs.cache-primary-key }}
 
       - name: Build
         run: |
@@ -142,8 +159,22 @@ jobs:
           [ -f test/env.${{ inputs.stage }}.txt ] && mv test/env.${{ inputs.stage }}.txt test/env.txt
           mocha
 
+      # Deploy stages the service under TMPDIR and runs its own production npm install
+      # there. Keeping that node_modules turns a two-minute install into a reconcile.
+      # Only node_modules is kept: the stage's bundle hashes must not skip rebuilds
+      # across commits.
+      - name: Restore staged dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/riddance/stage/*/node_modules
+          key: stage-deps-${{ inputs.stage }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('checkout{0}/package-lock.json', inputs.api_dir), format('glue/{0}/glue.json', inputs.stage)) }}
+          restore-keys: |
+            stage-deps-${{ inputs.stage }}-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Deploy
         id: deploy
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: |
           cd ./checkout${{ inputs.api_dir }}
           node ${{ github.workspace }}/node-aws-env/bin/deploy.js --env ${{ inputs.stage }} --glue-file ${{ github.workspace }}/glue/${{ inputs.stage }}/glue.json --path ${{ github.workspace }}/checkout${{ inputs.api_dir }}
