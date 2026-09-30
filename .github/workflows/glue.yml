@@ -84,20 +84,30 @@ jobs:
         with:
           node-version: 22
           registry-url: 'https://npm.pkg.github.com'
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
           scope: '@understory-io'
+
+      # setup-node's own npm cache is keyed on every lockfile and has no fallback, so
+      # any dependency change restarted the download cache from nothing. ~/.npm is
+      # content-addressed, so restoring an older one is always safe.
+      - name: Restore npm download cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-${{ runner.arch }}-
+            node-cache-${{ runner.os }}-
 
       # Installed once, outside the cache-gated step, because Build and Test need
       # these whether or not node-aws-env came back from the cache.
       - name: Install global build tools
-        run: npm install -g typescript@5.8.3 eslint@8.57.0 mocha@10.4.0
+        run: npm install -g --prefer-offline --no-audit --no-fund typescript@5.8.3 eslint@8.57.0 mocha@10.4.0
 
       - name: Install & Setup node-aws-env
         if: steps.restore-node-aws-env-cache.outputs.cache-hit != 'true'
         run: |
           cd ./node-aws-env
-          npm install
+          npm install --prefer-offline --no-audit --no-fund
           tsc
 
       - name: Save node-aws-env cache
@@ -119,20 +129,30 @@ jobs:
           role-session-name: Github-Actions-Glue-Session
           role-duration-seconds: 3600
 
-      # npm ci deletes node_modules before installing, so only an exact lockfile match
-      # can stand in for it; anything else falls through to a clean install.
+      # An exact lockfile match skips the install. Otherwise the closest earlier
+      # node_modules is reconciled with npm install, because npm ci would delete it and
+      # rebuild every git dependency from source. npm ci --dry-run still refuses a
+      # lockfile that disagrees with package.json first, and --no-save keeps the
+      # lockfile exactly as committed.
       - name: Restore project dependencies
         id: restore-project-deps
         uses: actions/cache/restore@v5
         with:
           path: './checkout${{ inputs.api_dir }}/node_modules'
           key: project-deps-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles(format('checkout{0}/package-lock.json', inputs.api_dir)) }}
+          restore-keys: |
+            project-deps-${{ runner.os }}-${{ runner.arch }}-node22-
 
       - name: Install project dependencies
         if: steps.restore-project-deps.outputs.cache-hit != 'true'
         run: |
           cd ./checkout${{ inputs.api_dir }}
-          npm ci
+          if [ -n "${{ steps.restore-project-deps.outputs.cache-matched-key }}" ]; then
+            npm ci --dry-run --ignore-scripts --no-audit --no-fund > /dev/null
+            npm install --no-save --prefer-offline --no-audit --no-fund
+          else
+            npm ci --prefer-offline --no-audit --no-fund
+          fi
 
       - name: Save project dependencies
         if: steps.restore-project-deps.outputs.cache-hit != 'true'
@@ -163,6 +183,10 @@ jobs:
       # there. Keeping that node_modules turns a two-minute install into a reconcile.
       # Only node_modules is kept: the stage's bundle hashes must not skip rebuilds
       # across commits.
+      # A PR can only restore caches saved on its own branch or on main, and main only
+      # deploys production, so a PR's first dev deploy used to start from nothing. It
+      # now falls back to main's production entry; both stages stage the same
+      # implementations, and npm install reconciles any difference.
       - name: Restore staged dependencies
         uses: actions/cache@v5
         with:
@@ -170,6 +194,7 @@ jobs:
           key: stage-deps-${{ inputs.stage }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('checkout{0}/package-lock.json', inputs.api_dir), format('glue/{0}/glue.json', inputs.stage)) }}
           restore-keys: |
             stage-deps-${{ inputs.stage }}-${{ runner.os }}-${{ runner.arch }}-
+            stage-deps-production-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Deploy
         id: deploy
