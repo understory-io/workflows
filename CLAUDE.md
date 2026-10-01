@@ -85,7 +85,6 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Trigger**: `workflow_call`
 - **Architecture Support**: ARM64 and x86_64
 - **Uses**: `docker-build` action internally
-- **`image_prebuilt: true`**: skips the build job and only deploys `{image_tag_prefix}latest`, for an image `ci-go-mise-lambda` already pushed
 
 #### 2. lambda-netcore-ecr (`lambda-netcore-ecr.yml`)
 
@@ -170,10 +169,9 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
   - `app_name` (required): artifact name, e.g. "bookings-core"
   - `app_dir` (required): path to the app, e.g. "apps/bookings-core"
   - `localstack_image` (optional, default: `localstack/localstack`): allows pinning a specific version
-  - `ecr_repository_name` + `architecture` (optional): build the Lambda image in this job and push it once tests pass; pair with `lambda-ecr`'s `image_prebuilt: true`. Needs the `aws_*` secrets
-- **Key Secret**: `go_private_modules_pat` (plus optional `aws_access_key_id`/`aws_secret_access_key`/`aws_region` for the image)
-- **What it does**: checkout → LocalStack pull started in the background → Setup Go (`go-version-file` from the app's own go.mod, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download -x` → (image mode: ECR login, then `mise build` + `docker buildx build --load` started in the background) → wait for LocalStack pull → `mise local:up` → `mise test` → `mise build` (image mode: wait for the background build, `docker push --all-tags`) → artifact upload → Go cache save (main only)
-- **ECR login**: done with `aws ecr get-login-password`, not `configure-aws-credentials`, which would export real credentials over the job's LocalStack `AWS_*` values
+- **Key Secret**: `go_private_modules_pat`
+- **What it does**: checkout → LocalStack pull started in the background → Setup Go (`go-version-file` from the app's own go.mod, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download -x` → `mise build` started in the background → wait for LocalStack pull → `mise local:up` → `mise test` → wait for the binary build → artifact upload → Go cache save (main only)
+- **Background build**: `mise build` runs alongside `local:up` and `mise test`, so a service whose build and test tasks write the same files (e.g. generated assets) would race
 - **Go cache restore** (both mise workflows): falls back to `{OS}-go-` when go.mod changed, so dependency bumps don't build cold
 - **Cache key fix**: uses `hashFiles(format('{0}/go.mod', inputs.app_dir))` to correctly hash the subdirectory go.mod (nested `${{ }}` inside `hashFiles()` is not evaluated by GitHub Actions)
 

@@ -97,6 +97,15 @@ jobs:
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
+      # Built in the background so the binary is ready when the tests finish
+      # instead of being compiled after them.
+      - name: Start Lambda binary build
+        working-directory: ${{ inputs.app_dir }}
+        env:
+          GOFLAGS: "-mod=readonly"
+        run: |
+          nohup bash -c 'mise build > /tmp/binary-build.log 2>&1; echo $? > /tmp/binary-build.exit' > /dev/null 2>&1 &
+
       - name: Wait for LocalStack Docker image
         if: inputs.enable_localstack
         timeout-minutes: 5
@@ -114,10 +123,12 @@ jobs:
         env:
           GOFLAGS: "-mod=readonly"
 
-      - name: Build Lambda binary
-        run: cd ${{ inputs.app_dir }} && mise build
-        env:
-          GOFLAGS: "-mod=readonly"
+      - name: Wait for Lambda binary build
+        timeout-minutes: 10
+        run: |
+          until [ -f /tmp/binary-build.exit ]; do sleep 1; done
+          cat /tmp/binary-build.log
+          exit "$(cat /tmp/binary-build.exit)"
 
       - name: Archive build artifacts
         uses: actions/upload-artifact@v7
