@@ -40,7 +40,9 @@ on:
 jobs:
   build:
     name: "Build & Push Image"
-    runs-on: ubuntu-latest
+    # A native runner for the image's architecture, so its RUN steps do not go
+    # through QEMU.
+    runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     outputs:
       image_repo: ${{ inputs.ecr_repository_name }}
@@ -63,26 +65,15 @@ jobs:
           aws_secret_access_key: ${{ secrets.aws_secret_access_key }}
           aws_region: ${{ secrets.aws_region }}
 
-  trigger-deploy:
-    if: inputs.aws_function_name != ''
-    needs: [build]
-    name: "Trigger Deploy"
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.aws_access_key_id }}
-          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
-          aws-region: ${{ secrets.aws_region }}
-
-      # Needed here because it's a secret value so cannot be passed as an output from the build job
+      # The deploy runs in this job rather than a job of its own: a second job only
+      # added a runner start and teardown to every deploy.
       - name: Login to Amazon ECR
+        if: inputs.aws_function_name != ''
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Setup aws role arn
+        if: inputs.aws_function_name != ''
         id: setup-aws-role-arn
         env:
           IMAGE_TAG_PREFIX: ${{ inputs.image_tag_prefix }}
@@ -99,6 +90,7 @@ jobs:
           echo "ROLE_TO_ASSUME=$ROLE_ARN" >> $GITHUB_ENV
 
       - name: Configure AWS credentials
+        if: inputs.aws_function_name != ''
         env:
           ROLE_TO_ASSUME: ${{ env.ROLE_TO_ASSUME }}
         uses: aws-actions/configure-aws-credentials@v6
@@ -110,6 +102,7 @@ jobs:
           role-duration-seconds: 900
 
       - name: Check if lambda function exists
+        if: inputs.aws_function_name != ''
         id: check_lambda
         run: |
           if aws lambda get-function --function-name ${{ inputs.aws_function_name }} > /dev/null 2>&1; then
@@ -121,6 +114,6 @@ jobs:
       - name: Update lambda image uri
         env:
           LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
-        if: env.LAMBDA_EXISTS == 'true'
+        if: inputs.aws_function_name != '' && env.LAMBDA_EXISTS == 'true'
         run: |
-          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo }}:${{ needs.build.outputs.image_tag }}
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
