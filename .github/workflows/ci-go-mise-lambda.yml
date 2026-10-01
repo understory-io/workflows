@@ -122,20 +122,47 @@ jobs:
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
-      - name: Start LocalStack and run migrations
+      # Installed up front so local:up and mise test, which now run side by side, do not
+      # both try to install the same missing tools.
+      - name: Install the app's tools
+        run: cd ${{ inputs.app_dir }} && mise install
+
+      # LocalStack and its migrations come up while the tests compile, instead of
+      # before. Run tests passes every test binary through a wrapper that waits for
+      # them, so nothing touches LocalStack early, and fails if they did not come up.
+      - name: Start LocalStack and run migrations in the background
         if: inputs.enable_localstack
         run: |
-          while kill -0 "$(cat /tmp/localstack-pull.pid)" 2>/dev/null; do sleep 1; done
-          cat /tmp/localstack-pull.log
-          cd ${{ inputs.app_dir }} && mise local:up
+          cat > /tmp/wait-for-localstack <<'WRAPPER'
+          #!/bin/sh
+          while [ ! -f /tmp/local-up.rc ]; do sleep 0.2; done
+          if [ "$(cat /tmp/local-up.rc)" != 0 ]; then
+            echo "LocalStack or its migrations failed; see the LocalStack log step" >&2
+            exit 1
+          fi
+          exec "$@"
+          WRAPPER
+          chmod +x /tmp/wait-for-localstack
+          echo "TEST_EXEC=-exec=/tmp/wait-for-localstack" >> "$GITHUB_ENV"
+          cd ${{ inputs.app_dir }}
+          nohup bash -c '
+            while kill -0 "$(cat /tmp/localstack-pull.pid)" 2>/dev/null; do sleep 1; done
+            cat /tmp/localstack-pull.log
+            mise local:up
+            echo $? > /tmp/local-up.rc
+          ' > /tmp/local-up.log 2>&1 &
 
       - name: Run tests
         run: cd ${{ inputs.app_dir }} && mise test
         env:
-          GOFLAGS: "-mod=readonly"
+          GOFLAGS: "-mod=readonly ${{ env.TEST_EXEC }}"
           # The race detector otherwise sleeps a second before every test binary
           # exits, which is most of the run time of a service with many packages.
           GORACE: "atexit_sleep_ms=0"
+
+      - name: LocalStack log
+        if: always() && inputs.enable_localstack
+        run: cat /tmp/local-up.log 2>/dev/null || true
 
       # Saved on every run, PRs included, under a key per run: a PR's next push then
       # restores its own build rather than main's, which can be a day older and
