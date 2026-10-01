@@ -33,9 +33,43 @@ on:
         # Every service ships an arm64 Lambda, so this builds natively, and these
         # runners run the tests faster than ubuntu-latest's.
         default: ubuntu-24.04-arm
+      # Optional: push the image and deploy from this workflow, replacing a separate
+      # lambda-ecr call. The image is then built in the binary job while the tests
+      # run, so a deploy no longer waits for an image build after them.
+      ecr_repository_name:
+        description: "ECR repository to push the Lambda image to; empty skips the image"
+        required: false
+        type: string
+        default: ""
+      image_tag_prefix:
+        description: "Image tag prefix, e.g. from repo-data's image_tag_prefix output"
+        required: false
+        type: string
+        default: ""
+      architecture:
+        description: "Lambda architecture for the image: arm64 or x86_64"
+        required: false
+        type: string
+        default: arm64
+      aws_function_name:
+        description: "Lambda function to deploy the image to after the tests pass; empty skips the deploy"
+        required: false
+        type: string
+        default: ""
+      deploy_account_id:
+        description: "AWS account to deploy into, overriding the prefix-based default (prod- -> platform-prod, otherwise platform-dev)"
+        required: false
+        type: string
+        default: ""
     secrets:
       go_private_modules_pat:
         required: true
+      aws_access_key_id:
+        required: false
+      aws_secret_access_key:
+        required: false
+      aws_region:
+        required: false
 
 # Tests and the Lambda binary run as two parallel jobs: the binary does not depend on
 # the tests, and callers' `needs:` on this workflow still waits for both.
@@ -216,6 +250,42 @@ jobs:
             ${{ inputs.app_dir }}/bin/**
             ${{ inputs.app_dir }}/Dockerfile
 
+      # Pushed under the commit sha only. The tags anything else reads (<prefix>latest
+      # and <prefix><run>) are added by the publish job, after the tests pass.
+      - name: Configure AWS credentials
+        if: inputs.ecr_repository_name != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+
+      - name: Login to Amazon ECR
+        if: inputs.ecr_repository_name != ''
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: inputs.ecr_repository_name != ''
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push the Lambda image
+        if: inputs.ecr_repository_name != ''
+        uses: docker/build-push-action@v7
+        env:
+          BUILDX_NO_DEFAULT_ATTESTATIONS: true
+        with:
+          context: ${{ inputs.app_dir }}
+          file: ${{ inputs.app_dir }}/Dockerfile
+          platforms: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || 'linux/amd64' }}
+          provenance: false
+          # Lets the image report service.version in telemetry. Baked into the image because
+          # Terraform owns the function's env vars and does not re-apply on deploy.
+          build-args: |
+            BUILD_REVISION=${{ github.sha }}
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
+
       # Saved on every run, PRs included, under a key per run: a PR's next push then
       # restores its own build rather than main's, which can be a day older and
       # recompiles everything the PR touched. The trim keeps only what this run used.
@@ -229,3 +299,73 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
           key: "${{ runner.os }}-${{ runner.arch }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ github.run_id }}-${{ github.run_attempt }}"
+
+  # Runs once both the tests and the image are done: tags the tested image the way
+  # lambda-ecr does, which is a manifest copy rather than a rebuild, and deploys it.
+  publish:
+    if: inputs.ecr_repository_name != ''
+    needs: [build, binary]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag the tested image
+        env:
+          REPOSITORY: ${{ inputs.ecr_repository_name }}
+          PREFIX: ${{ inputs.image_tag_prefix }}
+        run: |
+          manifest=$(aws ecr batch-get-image --repository-name "$REPOSITORY" \
+            --image-ids imageTag=${{ github.sha }} \
+            --accepted-media-types application/vnd.docker.distribution.manifest.v2+json application/vnd.oci.image.manifest.v1+json \
+            --query 'images[0].imageManifest' --output text)
+          for tag in "${PREFIX}${{ github.run_number }}" "${PREFIX}latest"; do
+            # put-image refuses a tag that already points at this manifest; that is fine.
+            aws ecr put-image --repository-name "$REPOSITORY" --image-tag "$tag" \
+              --image-manifest "$manifest" > /dev/null 2> /tmp/put-image.err \
+              || grep -q ImageAlreadyExistsException /tmp/put-image.err \
+              || { cat /tmp/put-image.err; exit 1; }
+          done
+
+      - name: Setup aws role arn
+        if: inputs.aws_function_name != ''
+        env:
+          IMAGE_TAG_PREFIX: ${{ inputs.image_tag_prefix }}
+          DEPLOY_ACCOUNT_ID: ${{ inputs.deploy_account_id }}
+        run: |
+          if [ -n "$DEPLOY_ACCOUNT_ID" ]; then
+            ROLE_ARN="arn:aws:iam::${DEPLOY_ACCOUNT_ID}:role/ContinuousDeliveryRole"
+          elif [ "$IMAGE_TAG_PREFIX" = "prod-" ]; then
+            ROLE_ARN="arn:aws:iam::189949407637:role/ContinuousDeliveryRole"
+          else
+            ROLE_ARN="arn:aws:iam::115578597962:role/ContinuousDeliveryRole"
+          fi
+          echo "ROLE_TO_ASSUME=$ROLE_ARN" >> $GITHUB_ENV
+
+      - name: Assume the deploy role
+        if: inputs.aws_function_name != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          role-duration-seconds: 900
+
+      - name: Update lambda image uri
+        if: inputs.aws_function_name != ''
+        run: |
+          if aws lambda get-function --function-name ${{ inputs.aws_function_name }} > /dev/null 2>&1; then
+            aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
+          else
+            echo "Function ${{ inputs.aws_function_name }} does not exist; skipping the deploy."
+          fi
