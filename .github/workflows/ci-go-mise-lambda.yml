@@ -99,12 +99,8 @@ jobs:
           echo "GOPRIVATE=github.com/understory-io/*" >> $GITHUB_ENV
           echo "GONOSUMDB=github.com/understory-io/*" >> $GITHUB_ENV
 
-      # Run in the app directory so the app's mise.toml tools are installed and cached
-      # here, rather than installed from scratch by the first mise task.
       - name: Install Mise
         uses: jdx/mise-action@v4
-        with:
-          working_directory: ${{ inputs.app_dir }}
 
       # Go caching strategy is based on https://danp.net/posts/github-actions-go-cache/
       - name: Restore Go cache
@@ -119,29 +115,12 @@ jobs:
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
-      # LocalStack and the migrations come up in the background while the tests
-      # compile; the next step but one waits for them.
-      - name: Start LocalStack and run migrations in the background
+      - name: Start LocalStack and run migrations
         if: inputs.enable_localstack
         run: |
           while kill -0 "$(cat /tmp/localstack-pull.pid)" 2>/dev/null; do sleep 1; done
           cat /tmp/localstack-pull.log
-          cd ${{ inputs.app_dir }}
-          nohup bash -c 'mise local:up; echo $? > /tmp/local-up.rc' > /tmp/local-up.log 2>&1 &
-
-      # Builds every test binary without running it (-exec /bin/true), so Run tests
-      # only links and executes.
-      - name: Compile tests
-        run: cd ${{ inputs.app_dir }} && go test -race -count=1 -exec /bin/true ./... > /dev/null
-        env:
-          GOFLAGS: "-mod=readonly"
-
-      - name: Wait for LocalStack and migrations
-        if: inputs.enable_localstack
-        run: |
-          while [ ! -f /tmp/local-up.rc ]; do sleep 1; done
-          cat /tmp/local-up.log
-          exit "$(cat /tmp/local-up.rc)"
+          cd ${{ inputs.app_dir }} && mise local:up
 
       - name: Run tests
         run: cd ${{ inputs.app_dir }} && mise test
@@ -203,8 +182,6 @@ jobs:
 
       - name: Install Mise
         uses: jdx/mise-action@v4
-        with:
-          working_directory: ${{ inputs.app_dir }}
 
       # Its own key, because this job compiles for the Lambda's architecture and
       # without -race, which the test job's cache barely covers. It falls back to the
