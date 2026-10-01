@@ -41,6 +41,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # Pulled in the background so the download overlaps the toolchain and
+      # dependency setup below instead of blocking the job ahead of the tests.
+      - name: Start LocalStack Docker image pull
+        if: inputs.enable_localstack
+        env:
+          LOCALSTACK_IMAGE: ${{ inputs.localstack_image }}
+        run: |
+          nohup sh -c 'docker pull "$LOCALSTACK_IMAGE" > /tmp/localstack-pull.log 2>&1; echo $? > /tmp/localstack-pull.exit' > /dev/null 2>&1 &
+
       # Runner images ship an older baked-in Go than what mise.toml/go.mod
       # pin. mise resolves go:-backend tool versions (e.g. sprt) by shelling
       # out to `go list -m`, which enforces the current module's go.mod floor
@@ -78,27 +87,23 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
           key: nonexistent
-          restore-keys: ${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+          # A go.mod change misses the first key; falling back to the newest
+          # cache of any go.mod keeps the build cache warm, since its entries
+          # are content-addressed and stale ones are never used.
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+            ${{ runner.os }}-go-
 
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
-      - name: Restore LocalStack Docker image cache
+      - name: Wait for LocalStack Docker image
         if: inputs.enable_localstack
-        uses: actions/cache@v5
-        with:
-          path: /tmp/localstack-image.tar
-          key: localstack-image-${{ runner.os }}-${{ inputs.localstack_image }}
-
-      - name: Load or pull LocalStack Docker image
-        if: inputs.enable_localstack
+        timeout-minutes: 5
         run: |
-          if [ -f /tmp/localstack-image.tar ]; then
-            docker load -i /tmp/localstack-image.tar
-          else
-            docker pull ${{ inputs.localstack_image }}
-            docker save ${{ inputs.localstack_image }} -o /tmp/localstack-image.tar
-          fi
+          until [ -f /tmp/localstack-pull.exit ]; do sleep 1; done
+          cat /tmp/localstack-pull.log
+          exit "$(cat /tmp/localstack-pull.exit)"
 
       - name: Start LocalStack and run migrations
         if: inputs.enable_localstack
