@@ -59,11 +59,13 @@ jobs:
           IMAGE: ${{ inputs.localstack_image }}
         run: |
           nohup bash -c '
+            echo "pull start $(date -u +%T)"
             if docker pull "public.ecr.aws/$IMAGE"; then
               docker tag "public.ecr.aws/$IMAGE" "$IMAGE"
             else
               docker pull "$IMAGE"
             fi
+            echo "pull end $(date -u +%T)"
           ' > /tmp/localstack-pull.log 2>&1 &
           echo $! > /tmp/localstack-pull.pid
 
@@ -148,8 +150,11 @@ jobs:
           nohup bash -c '
             while kill -0 "$(cat /tmp/localstack-pull.pid)" 2>/dev/null; do sleep 1; done
             cat /tmp/localstack-pull.log
+            echo "local:up start $(date -u +%T)"
             mise local:up
-            echo $? > /tmp/local-up.rc
+            rc=$?
+            echo "local:up end $(date -u +%T)"
+            echo $rc > /tmp/local-up.rc
           ' > /tmp/local-up.log 2>&1 &
 
       - name: Run tests
