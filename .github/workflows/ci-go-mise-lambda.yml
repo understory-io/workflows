@@ -30,6 +30,8 @@ on:
       go_private_modules_pat:
         required: true
 
+# Tests and the Lambda binary run as two parallel jobs: the binary does not depend on
+# the tests, and callers' `needs:` on this workflow still waits for both.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,6 +42,36 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      # Started first so the download overlaps Go setup and the cache restore. ECR
+      # Public mirrors Docker Hub's images without its anonymous pull limits; it is
+      # tagged back to the requested name, which mise.toml's local:up runs.
+      - name: Pull LocalStack image in the background
+        if: inputs.enable_localstack
+        env:
+          IMAGE: ${{ inputs.localstack_image }}
+        run: |
+          nohup bash -c '
+            if docker pull "public.ecr.aws/$IMAGE"; then
+              docker tag "public.ecr.aws/$IMAGE" "$IMAGE"
+            else
+              docker pull "$IMAGE"
+            fi
+          ' > /tmp/localstack-pull.log 2>&1 &
+          echo $! > /tmp/localstack-pull.pid
+
+      # setup-go downloads the toolchain on every run when the version is not baked
+      # into the runner image; restoring it into the tool cache makes it a lookup.
+      # Only that version's directory is cached, not the runner's preinstalled ones.
+      - name: Resolve Go version
+        id: go-version
+        run: echo "version=$(sed -n 's/^go //p' ${{ inputs.app_dir }}/go.mod)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Go toolchain
+        uses: actions/cache@v5
+        with:
+          path: /opt/hostedtoolcache/go/${{ steps.go-version.outputs.version }}*
+          key: go-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-version.outputs.version }}
 
       # Runner images ship an older baked-in Go than what mise.toml/go.mod
       # pin. mise resolves go:-backend tool versions (e.g. sprt) by shelling
@@ -67,8 +99,12 @@ jobs:
           echo "GOPRIVATE=github.com/understory-io/*" >> $GITHUB_ENV
           echo "GONOSUMDB=github.com/understory-io/*" >> $GITHUB_ENV
 
+      # Run in the app directory so the app's mise.toml tools are installed and cached
+      # here, rather than installed from scratch by the first mise task.
       - name: Install Mise
         uses: jdx/mise-action@v4
+        with:
+          working_directory: ${{ inputs.app_dir }}
 
       # Go caching strategy is based on https://danp.net/posts/github-actions-go-cache/
       - name: Restore Go cache
@@ -83,31 +119,106 @@ jobs:
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
-      - name: Restore LocalStack Docker image cache
-        if: inputs.enable_localstack
-        uses: actions/cache@v5
-        with:
-          path: /tmp/localstack-image.tar
-          key: localstack-image-${{ runner.os }}-${{ inputs.localstack_image }}
-
-      - name: Load or pull LocalStack Docker image
+      # LocalStack and the migrations come up in the background while the tests
+      # compile; the next step but one waits for them.
+      - name: Start LocalStack and run migrations in the background
         if: inputs.enable_localstack
         run: |
-          if [ -f /tmp/localstack-image.tar ]; then
-            docker load -i /tmp/localstack-image.tar
-          else
-            docker pull ${{ inputs.localstack_image }}
-            docker save ${{ inputs.localstack_image }} -o /tmp/localstack-image.tar
-          fi
+          while kill -0 "$(cat /tmp/localstack-pull.pid)" 2>/dev/null; do sleep 1; done
+          cat /tmp/localstack-pull.log
+          cd ${{ inputs.app_dir }}
+          nohup bash -c 'mise local:up; echo $? > /tmp/local-up.rc' > /tmp/local-up.log 2>&1 &
 
-      - name: Start LocalStack and run migrations
+      # Builds every test binary without running it (-exec /bin/true), so Run tests
+      # only links and executes.
+      - name: Compile tests
+        run: cd ${{ inputs.app_dir }} && go test -race -count=1 -exec /bin/true ./... > /dev/null
+        env:
+          GOFLAGS: "-mod=readonly"
+
+      - name: Wait for LocalStack and migrations
         if: inputs.enable_localstack
-        run: cd ${{ inputs.app_dir }} && mise local:up
+        run: |
+          while [ ! -f /tmp/local-up.rc ]; do sleep 1; done
+          cat /tmp/local-up.log
+          exit "$(cat /tmp/local-up.rc)"
 
       - name: Run tests
         run: cd ${{ inputs.app_dir }} && mise test
         env:
           GOFLAGS: "-mod=readonly"
+          # The race detector otherwise sleeps a second before every test binary
+          # exits, which is most of the run time of a service with many packages.
+          GORACE: "atexit_sleep_ms=0"
+
+      - name: Trim Go build cache
+        if: github.ref == 'refs/heads/main'
+        run: find ~/.cache/go-build -type f -mmin +90 -delete
+
+      - name: Set cache date
+        run: echo "GO_CACHE_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+      - name: Save Go cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: "${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ env.GO_CACHE_DATE }}"
+
+  binary:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Resolve Go version
+        id: go-version
+        run: echo "version=$(sed -n 's/^go //p' ${{ inputs.app_dir }}/go.mod)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Go toolchain
+        uses: actions/cache/restore@v5
+        with:
+          path: /opt/hostedtoolcache/go/${{ steps.go-version.outputs.version }}*
+          key: go-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-version.outputs.version }}
+
+      # See the build job for why this precedes mise.
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ inputs.app_dir }}/go.mod
+          cache: false
+
+      - name: Configure access to private Go modules
+        env:
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.go_private_modules_pat }}
+        run: |
+          git config --global \
+            url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
+            "https://github.com/understory-io"
+          echo "GOPRIVATE=github.com/understory-io/*" >> $GITHUB_ENV
+          echo "GONOSUMDB=github.com/understory-io/*" >> $GITHUB_ENV
+
+      - name: Install Mise
+        uses: jdx/mise-action@v4
+        with:
+          working_directory: ${{ inputs.app_dir }}
+
+      # Its own key, because this job compiles for the Lambda's architecture and
+      # without -race, which the test job's cache barely covers. It falls back to the
+      # test job's entry until main has saved one.
+      - name: Restore Go cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: nonexistent
+          restore-keys: |
+            ${{ runner.os }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+            ${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
 
       - name: Build Lambda binary
         run: cd ${{ inputs.app_dir }} && mise build
@@ -137,4 +248,4 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: "${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ env.GO_CACHE_DATE }}"
+          key: "${{ runner.os }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ env.GO_CACHE_DATE }}"
