@@ -29,11 +29,6 @@ on:
         required: false
         default: ""
         description: "AWS account id to assume into for the lambda deploy step. Overrides the prefix-based default (prod- → platform-prod, otherwise platform-dev). Use when the function lives in an account that doesn't match the image tag convention."
-      image_prebuilt:
-        type: boolean
-        required: false
-        default: false
-        description: "Skip the image build and only deploy, for an image ci-go-mise-lambda already pushed (its ecr_repository_name input)"
     secrets:
       aws_access_key_id:
         required: true
@@ -45,9 +40,11 @@ on:
 jobs:
   build:
     name: "Build & Push Image"
-    if: ${{ !inputs.image_prebuilt }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
+    outputs:
+      image_repo: ${{ inputs.ecr_repository_name }}
+      image_tag: ${{ inputs.image_tag_prefix }}latest
     steps:
       - name: Download a single artifact
         uses: actions/download-artifact@v8
@@ -67,8 +64,7 @@ jobs:
           aws_region: ${{ secrets.aws_region }}
 
   trigger-deploy:
-    # Runs when build is skipped for a prebuilt image, but not when it failed
-    if: ${{ !cancelled() && !failure() && inputs.aws_function_name != '' }}
+    if: inputs.aws_function_name != ''
     needs: [build]
     name: "Trigger Deploy"
     runs-on: ubuntu-latest
@@ -127,4 +123,4 @@ jobs:
           LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
         if: env.LAMBDA_EXISTS == 'true'
         run: |
-          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
+          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ needs.build.outputs.image_repo }}:${{ needs.build.outputs.image_tag }}

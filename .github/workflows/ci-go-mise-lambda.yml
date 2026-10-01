@@ -26,25 +26,9 @@ on:
         required: false
         type: boolean
         default: true
-      ecr_repository_name:
-        description: "ECR repository for the Lambda image. When set, the image is built while the tests run and pushed once they pass; deploy it with lambda-ecr's image_prebuilt"
-        required: false
-        type: string
-        default: ""
-      architecture:
-        description: "Image architecture when ecr_repository_name is set: arm64 or x86_64"
-        required: false
-        type: string
-        default: ""
     secrets:
       go_private_modules_pat:
         required: true
-      aws_access_key_id:
-        required: false
-      aws_secret_access_key:
-        required: false
-      aws_region:
-        required: false
 
 jobs:
   build:
@@ -113,48 +97,6 @@ jobs:
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
 
-      # Logged in by hand: configure-aws-credentials would export the real
-      # credentials over the LocalStack ones the tests rely on.
-      - name: Log in to Amazon ECR
-        if: inputs.ecr_repository_name != ''
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.aws_access_key_id }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.aws_secret_access_key }}
-          AWS_REGION: ${{ secrets.aws_region }}
-        run: |
-          account=$(aws sts get-caller-identity --query Account --output text)
-          registry="$account.dkr.ecr.$AWS_REGION.amazonaws.com"
-          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
-          echo "ECR_REGISTRY=$registry" >> "$GITHUB_ENV"
-
-      # Built in the background so the binary and image are ready when the
-      # tests finish. Nothing is pushed until they pass.
-      - name: Start Lambda binary and image build
-        if: inputs.ecr_repository_name != ''
-        working-directory: ${{ inputs.app_dir }}
-        env:
-          GOFLAGS: "-mod=readonly"
-          ECR_REPOSITORY: ${{ inputs.ecr_repository_name }}
-          # Same rule as repo-data's image_tag_prefix, which lambda-ecr deploys by
-          IMAGE_TAG_PREFIX: ${{ (github.ref_name == 'main' || github.ref_name == 'master') && 'prod-' || 'dev-' }}
-          PLATFORM: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || inputs.architecture == 'x86_64' && 'linux/amd64' || '' }}
-        run: |
-          cat > /tmp/image-build.sh <<'EOF'
-          set -e
-          mise build
-          if [ "$PLATFORM" = linux/arm64 ] && [ "$(uname -m)" != aarch64 ] && [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-            docker run --privileged --rm tonistiigi/binfmt --install arm64
-          fi
-          image="$ECR_REGISTRY/$ECR_REPOSITORY"
-          docker buildx build ${PLATFORM:+--platform "$PLATFORM"} --provenance=false \
-            --build-arg BUILD_REVISION="$GITHUB_SHA" \
-            -t "$image:$GITHUB_SHA" \
-            -t "$image:$IMAGE_TAG_PREFIX$GITHUB_RUN_NUMBER" \
-            -t "$image:${IMAGE_TAG_PREFIX}latest" \
-            --load .
-          EOF
-          nohup bash -c 'bash /tmp/image-build.sh > /tmp/image-build.log 2>&1; echo $? > /tmp/image-build.exit' > /dev/null 2>&1 &
-
       - name: Wait for LocalStack Docker image
         if: inputs.enable_localstack
         timeout-minutes: 5
@@ -173,22 +115,9 @@ jobs:
           GOFLAGS: "-mod=readonly"
 
       - name: Build Lambda binary
-        if: inputs.ecr_repository_name == ''
         run: cd ${{ inputs.app_dir }} && mise build
         env:
           GOFLAGS: "-mod=readonly"
-
-      - name: Wait for Lambda binary and image build
-        if: inputs.ecr_repository_name != ''
-        timeout-minutes: 10
-        run: |
-          until [ -f /tmp/image-build.exit ]; do sleep 1; done
-          cat /tmp/image-build.log
-          exit "$(cat /tmp/image-build.exit)"
-
-      - name: Push Lambda image
-        if: inputs.ecr_repository_name != ''
-        run: docker push --all-tags "$ECR_REGISTRY/${{ inputs.ecr_repository_name }}"
 
       - name: Archive build artifacts
         uses: actions/upload-artifact@v7
