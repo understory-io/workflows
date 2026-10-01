@@ -26,6 +26,13 @@ on:
         required: false
         type: boolean
         default: true
+      runner:
+        description: "Runner label for both jobs"
+        required: false
+        type: string
+        # Every service ships an arm64 Lambda, so this builds natively, and these
+        # runners run the tests faster than ubuntu-latest's.
+        default: ubuntu-24.04-arm
     secrets:
       go_private_modules_pat:
         required: true
@@ -34,7 +41,7 @@ on:
 # the tests, and callers' `needs:` on this workflow still waits for both.
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       AWS_ACCESS_KEY_ID: test
@@ -110,7 +117,7 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
           key: nonexistent
-          restore-keys: ${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
 
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
@@ -130,24 +137,22 @@ jobs:
           # exits, which is most of the run time of a service with many packages.
           GORACE: "atexit_sleep_ms=0"
 
+      # Saved on every run, PRs included, under a key per run: a PR's next push then
+      # restores its own build rather than main's, which can be a day older and
+      # recompiles everything the PR touched. The trim keeps only what this run used.
       - name: Trim Go build cache
-        if: github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +90 -delete
 
-      - name: Set cache date
-        run: echo "GO_CACHE_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
-
       - name: Save Go cache
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: "${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ env.GO_CACHE_DATE }}"
+          key: "${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ github.run_id }}-${{ github.run_attempt }}"
 
   binary:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - name: Checkout repository
@@ -194,8 +199,8 @@ jobs:
             ~/.cache/go-build
           key: nonexistent
           restore-keys: |
-            ${{ runner.os }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
-            ${{ runner.os }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
 
       - name: Build Lambda binary
         run: cd ${{ inputs.app_dir }} && mise build
@@ -211,18 +216,16 @@ jobs:
             ${{ inputs.app_dir }}/bin/**
             ${{ inputs.app_dir }}/Dockerfile
 
+      # Saved on every run, PRs included, under a key per run: a PR's next push then
+      # restores its own build rather than main's, which can be a day older and
+      # recompiles everything the PR touched. The trim keeps only what this run used.
       - name: Trim Go build cache
-        if: github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +90 -delete
 
-      - name: Set cache date
-        run: echo "GO_CACHE_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
-
       - name: Save Go cache
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: "${{ runner.os }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ env.GO_CACHE_DATE }}"
+          key: "${{ runner.os }}-${{ runner.arch }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ github.run_id }}-${{ github.run_attempt }}"
