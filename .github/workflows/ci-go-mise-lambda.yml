@@ -58,6 +58,7 @@ jobs:
         env:
           IMAGE: ${{ inputs.localstack_image }}
         run: |
+          which unpigz pigz || echo "no pigz"; docker version --format '{{.Server.Version}}'; docker info --format '{{.Driver}} {{json .DriverStatus}}'
           nohup bash -c '
             echo "pull start $(date -u +%T)"
             if docker pull "public.ecr.aws/$IMAGE"; then
