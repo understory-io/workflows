@@ -250,42 +250,6 @@ jobs:
             ${{ inputs.app_dir }}/bin/**
             ${{ inputs.app_dir }}/Dockerfile
 
-      # Pushed under the commit sha only. The tags anything else reads (<prefix>latest
-      # and <prefix><run>) are added by the publish job, after the tests pass.
-      - name: Configure AWS credentials
-        if: inputs.ecr_repository_name != ''
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.aws_access_key_id }}
-          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
-          aws-region: ${{ secrets.aws_region }}
-
-      - name: Login to Amazon ECR
-        if: inputs.ecr_repository_name != ''
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Set up Docker Buildx
-        if: inputs.ecr_repository_name != ''
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build and push the Lambda image
-        if: inputs.ecr_repository_name != ''
-        uses: docker/build-push-action@v7
-        env:
-          BUILDX_NO_DEFAULT_ATTESTATIONS: true
-        with:
-          context: ${{ inputs.app_dir }}
-          file: ${{ inputs.app_dir }}/Dockerfile
-          platforms: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || 'linux/amd64' }}
-          provenance: false
-          # Lets the image report service.version in telemetry. Baked into the image because
-          # Terraform owns the function's env vars and does not re-apply on deploy.
-          build-args: |
-            BUILD_REVISION=${{ github.sha }}
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
-
       # Saved on every run, PRs included, under a key per run: a PR's next push then
       # restores its own build rather than main's, which can be a day older and
       # recompiles everything the PR touched. The trim keeps only what this run used.
@@ -300,11 +264,57 @@ jobs:
             ~/.cache/go-build
           key: "${{ runner.os }}-${{ runner.arch }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-${{ github.run_id }}-${{ github.run_attempt }}"
 
+  # Its own job, not steps in binary: mise-action exports each app's mise.toml [env]
+  # into the job, and apps that point AWS_ENDPOINT_URL and credentials at LocalStack
+  # would send the ECR login there. It still runs alongside the tests.
+  image:
+    if: inputs.ecr_repository_name != ''
+    needs: [binary]
+    runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - name: Download the build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.app_name }}
+
+      # Pushed under the commit sha only. The tags anything else reads (<prefix>latest
+      # and <prefix><run>) are added by the publish job, after the tests pass.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ secrets.aws_region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push the Lambda image
+        uses: docker/build-push-action@v7
+        env:
+          BUILDX_NO_DEFAULT_ATTESTATIONS: true
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ inputs.architecture == 'arm64' && 'linux/arm64' || 'linux/amd64' }}
+          provenance: false
+          # Lets the image report service.version in telemetry. Baked into the image because
+          # Terraform owns the function's env vars and does not re-apply on deploy.
+          build-args: |
+            BUILD_REVISION=${{ github.sha }}
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
+
   # Runs once both the tests and the image are done: tags the tested image the way
   # lambda-ecr does, which is a manifest copy rather than a rebuild, and deploys it.
   publish:
     if: inputs.ecr_repository_name != ''
-    needs: [build, binary]
+    needs: [build, image]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
