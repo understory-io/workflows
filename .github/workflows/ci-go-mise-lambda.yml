@@ -151,7 +151,11 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
           key: nonexistent
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+          # The last key ignores go.mod, so a dependency bump starts from main's latest
+          # build instead of from nothing; Go only reuses entries whose inputs match.
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-
 
       - name: Download Go dependencies
         run: cd ${{ inputs.app_dir }} && go mod download -x
@@ -235,6 +239,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-go-binary-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
             ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles(format('{0}/go.mod', inputs.app_dir)) }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-binary-
 
       - name: Build Lambda binary
         run: cd ${{ inputs.app_dir }} && mise build
