@@ -378,9 +378,29 @@ jobs:
 
       - name: Update lambda image uri
         if: inputs.aws_function_name != ''
+        env:
+          FUNCTION_NAME: ${{ inputs.aws_function_name }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
         run: |
-          if aws lambda get-function --function-name ${{ inputs.aws_function_name }} > /dev/null 2>&1; then
-            aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
-          else
-            echo "Function ${{ inputs.aws_function_name }} does not exist; skipping the deploy."
+          if ! aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
+            echo "Function $FUNCTION_NAME does not exist; skipping the deploy."
+            exit 0
           fi
+
+          # Branches building in parallel (stacked PRs) deploy the same function,
+          # and Lambda rejects an update while another is in progress. The wait
+          # is bounded so three attempts fit inside the job timeout.
+          for attempt in 1 2 3; do
+            timeout 90 aws lambda wait function-updated --function-name "$FUNCTION_NAME" || true
+            rc=0
+            output=$(aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "$IMAGE_URI" 2>&1) || rc=$?
+            echo "$output"
+            if [ "$rc" -eq 0 ]; then
+              exit 0
+            fi
+            if ! grep -q ResourceConflictException <<< "$output"; then
+              exit "$rc"
+            fi
+            echo "Another update is in progress; retrying (attempt $attempt of 3)"
+          done
+          exit 1
