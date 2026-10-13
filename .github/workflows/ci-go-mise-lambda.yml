@@ -387,22 +387,20 @@ jobs:
             exit 0
           fi
 
-          # Branches that build in parallel (stacked PRs) deploy the same
-          # function, and Lambda rejects an update while another is still in
-          # progress. Waiting for it to settle and retrying keeps every build
-          # green; whichever update lands last is the one that stays deployed.
-          for attempt in 1 2 3 4 5 6; do
-            aws lambda wait function-updated --function-name "$FUNCTION_NAME" || true
-            if output=$(aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "$IMAGE_URI" 2>&1); then
-              echo "$output"
+          # Branches building in parallel (stacked PRs) deploy the same function,
+          # and Lambda rejects an update while another is in progress. The wait
+          # is bounded so three attempts fit inside the job timeout.
+          for attempt in 1 2 3; do
+            timeout 90 aws lambda wait function-updated --function-name "$FUNCTION_NAME" || true
+            rc=0
+            output=$(aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "$IMAGE_URI" 2>&1) || rc=$?
+            echo "$output"
+            if [ "$rc" -eq 0 ]; then
               exit 0
             fi
-            echo "$output"
             if ! grep -q ResourceConflictException <<< "$output"; then
-              exit 1
+              exit "$rc"
             fi
-            echo "Another update is in progress; retrying (attempt $attempt of 6)"
-            sleep 10
+            echo "Another update is in progress; retrying (attempt $attempt of 3)"
           done
-          echo "Gave up waiting for the in-progress update to finish"
           exit 1
