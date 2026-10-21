@@ -322,6 +322,10 @@ jobs:
     needs: [build, image]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # Every PR in a stack builds as if it targeted the stack's base, so each would
+      # deploy to the same dev function. Only the top PR holds the whole stack.
+      STACK_TOP: ${{ github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -343,7 +347,11 @@ jobs:
             --image-ids imageTag=${{ github.sha }} \
             --accepted-media-types application/vnd.docker.distribution.manifest.v2+json application/vnd.oci.image.manifest.v1+json \
             --query 'images[0].imageManifest' --output text)
-          for tag in "${PREFIX}${{ github.run_number }}" "${PREFIX}latest"; do
+          tags=("${PREFIX}${{ github.run_number }}")
+          if [ "$STACK_TOP" = "true" ]; then
+            tags+=("${PREFIX}latest")
+          fi
+          for tag in "${tags[@]}"; do
             # put-image refuses a tag that already points at this manifest; that is fine.
             aws ecr put-image --repository-name "$REPOSITORY" --image-tag "$tag" \
               --image-manifest "$manifest" > /dev/null 2> /tmp/put-image.err \
@@ -377,7 +385,7 @@ jobs:
           role-duration-seconds: 900
 
       - name: Update lambda image uri
-        if: inputs.aws_function_name != ''
+        if: inputs.aws_function_name != '' && env.STACK_TOP == 'true'
         env:
           FUNCTION_NAME: ${{ inputs.aws_function_name }}
           IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
