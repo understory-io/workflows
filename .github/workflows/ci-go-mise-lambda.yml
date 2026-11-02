@@ -25,7 +25,7 @@ on:
         description: "Whether to start LocalStack for integration tests"
         required: false
         type: boolean
-        default: true
+        default: false
       runner:
         description: "Runner label for both jobs"
         required: false
