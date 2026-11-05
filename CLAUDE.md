@@ -180,12 +180,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: Extract and process repository metadata
 - **Trigger**: `workflow_call`
 
-#### 15. pixel-collector (`pixel-collector.yml`)
-
-- **Purpose**: Collect component/package usage metrics
-- **Trigger**: `workflow_call`
-
-#### 16. terraform (`terraform.yml`)
+#### 15. terraform (`terraform.yml`)
 
 - **Purpose**: Plan on PRs with the result commented back, apply on push, for every infrastructure repo
 - **Trigger**: `workflow_call`

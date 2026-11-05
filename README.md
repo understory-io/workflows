@@ -95,7 +95,6 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 #### Utilities
 
 - **`repo-data`** - Extract repository metadata
-- **`pixel-collector`** - Collect component/package usage metrics
 
 ## Environment Conventions
 
