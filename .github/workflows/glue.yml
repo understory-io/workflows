@@ -176,6 +176,25 @@ jobs:
             node bin/install.js "$project"
           fi
 
+      # The global eslint 8 cannot load an eslint 10 config, so projects on eslint 10
+      # use their own tsc, eslint and mocha. Older projects keep the global tools.
+      - name: Use the project's build tools
+        run: |
+          project="${{ github.workspace }}/checkout${{ inputs.api_dir }}"
+          eslint_pkg="$project/node_modules/eslint/package.json"
+          if [ -f "$eslint_pkg" ] && [ "$(node -p "require('$eslint_pkg').version.split('.')[0]")" -ge 10 ]; then
+            for tool in tsc eslint mocha; do
+              if [ ! -x "$project/node_modules/.bin/$tool" ]; then
+                echo "::error::$tool is missing from node_modules/.bin, but the project is on eslint 10"
+                exit 1
+              fi
+            done
+            echo "$project/node_modules/.bin" >> "$GITHUB_PATH"
+            echo "Using the project's tsc, eslint and mocha"
+          else
+            echo "Using the global tsc, eslint and mocha"
+          fi
+
       - name: Build
         run: |
           cd ./checkout${{ inputs.api_dir }}
