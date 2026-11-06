@@ -162,12 +162,13 @@ jobs:
           key: ${{ steps.restore-project-deps.outputs.cache-primary-key }}
 
       # @riddance/env's postinstall writes the project's tsconfig.json,
-      # eslint.config.js and friends, which are gitignored. A cached node_modules
-      # skips npm ci and with it that postinstall, leaving Build without a config.
+      # eslint.config.js and friends, which are gitignored. An exact cache hit skips
+      # the install, and a fallback restore's npm install only runs the scripts of
+      # packages it changes, so either can leave Build without a config. Setup only
+      # writes files that are missing, so it is safe after a full npm ci too.
       # install.js resolves its templates from the package directory, as the
       # postinstall does.
       - name: Set up riddance project files
-        if: steps.restore-project-deps.outputs.cache-hit == 'true'
         run: |
           project="${{ github.workspace }}/checkout${{ inputs.api_dir }}"
           if [ -f "$project/node_modules/@riddance/env/bin/install.js" ]; then
