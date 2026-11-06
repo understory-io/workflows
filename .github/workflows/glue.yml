@@ -191,6 +191,8 @@ jobs:
             done
             echo "$project/node_modules/.bin" >> "$GITHUB_PATH"
             echo "Using the project's tsc, eslint and mocha"
+            "$project/node_modules/.bin/tsc" --version
+            "$project/node_modules/.bin/eslint" --version
           else
             echo "Using the global tsc, eslint and mocha"
           fi
