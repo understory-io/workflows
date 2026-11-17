@@ -70,8 +70,26 @@ runs:
       shell: bash
       env:
         LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
+        FUNCTION_NAME: ${{ inputs.aws_function_name }}
+        IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
       if: env.LAMBDA_EXISTS == 'true'
       run: |
-        aws lambda update-function-code \
-          --function-name '${{ inputs.aws_function_name }}' \
-          --image-uri '${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest'
+        # Branches building in parallel deploy the same function, and Lambda
+        # rejects an update while another is in progress
+        # (ResourceConflictException). Wait for the running update, then try
+        # again, as ci-go-mise-lambda does. The wait is bounded so three
+        # attempts fit inside the job.
+        for attempt in 1 2 3; do
+          timeout 90 aws lambda wait function-updated --function-name "$FUNCTION_NAME" || true
+          rc=0
+          output=$(aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "$IMAGE_URI" 2>&1) || rc=$?
+          echo "$output"
+          if [ "$rc" -eq 0 ]; then
+            exit 0
+          fi
+          if ! grep -q ResourceConflictException <<< "$output"; then
+            exit "$rc"
+          fi
+          echo "Another update is in progress; retrying (attempt $attempt of 3)"
+        done
+        exit 1
