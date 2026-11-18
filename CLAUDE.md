@@ -12,6 +12,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 .github/
 ├── actions/           # Reusable composite actions
 │   ├── docker-build/  # Docker image building and pushing to ECR
+│   ├── image-exists/  # Fail unless an image reference resolves
 │   └── lambda-deploy/ # Lambda function deployment
 └── workflows/         # Reusable workflows
 ```
@@ -74,6 +75,18 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - If `image_tag_prefix` is "prod-": Uses production role (account: 189949407637)
 - Otherwise: Uses non-production role (account: 115578597962)
+
+### 3. image-exists (`/.github/actions/image-exists/action.yml`)
+
+**Purpose**: Fail unless an image reference resolves in its registry, before a release names it. Deploy tools that only rewrite a tag (Forest's `pin_image` provider) cannot tell a pushed image from a typo or a cancelled build, and ECS then retries the pull indefinitely.
+
+**Inputs**: `image` (required, full reference), `attempts` (optional, default 3, linear 5 s backoff).
+
+**Output**: `digest` (`sha256:…`), also written to the step summary.
+
+**Credentials**: none of its own. For a private registry put `docker/login-action` before it (for GHCR the job needs `packages: read`). An auth failure is refused the same as a missing image.
+
+**Test**: `image-exists.yml` (this repo's own CI) checks that a present public image yields a digest and a never-pushed tag is refused.
 
 ## GitHub Workflows (Reusable Workflows)
 
