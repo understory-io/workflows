@@ -1,0 +1,61 @@
+name: "Image exists"
+description: >-
+  Fail unless an image reference resolves in its registry, and output its digest.
+  Run it before a release names the image: a deploy tool that only rewrites a tag
+  string will otherwise point a service at an image that was never pushed, and
+  ECS retries the pull until someone notices.
+
+inputs:
+  image:
+    description: >-
+      The full reference, e.g. `ghcr.io/understory-io/agent-gateway:main-3c89645`.
+      A private registry needs a `docker/login-action` step before this one.
+    required: true
+  attempts:
+    description: >-
+      How many times to ask the registry before giving up. A push from the
+      previous job can take a few seconds to show up.
+    required: false
+    default: "3"
+
+outputs:
+  digest:
+    description: The manifest digest the reference resolves to, e.g. `sha256:…`.
+    value: ${{ steps.inspect.outputs.digest }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Inspect the image
+      id: inspect
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        set -uo pipefail
+        if [ -z "$IMAGE" ]; then
+          echo "::error::no image reference was given"
+          exit 1
+        fi
+        if ! [[ $ATTEMPTS =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::attempts must be a positive integer, not '$ATTEMPTS'"
+          exit 1
+        fi
+        err="$RUNNER_TEMP/image-exists.err"
+        for attempt in $(seq 1 "$ATTEMPTS"); do
+          if digest=$(docker buildx imagetools inspect "$IMAGE" --format '{{.Manifest.Digest}}' 2> "$err"); then
+            if [[ $digest != sha256:* ]]; then
+              echo "::error::$IMAGE answered with '$digest', not a digest"
+              exit 1
+            fi
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            echo "### \`$IMAGE\` → \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "$IMAGE resolves to $digest"
+            exit 0
+          fi
+          [ "$attempt" -lt "$ATTEMPTS" ] && sleep $((attempt * 5))
+        done
+        cat "$err" >&2
+        echo "::error::$IMAGE could not be resolved (the registry's answer is above); refusing to release an image that may never have been pushed"
+        exit 1

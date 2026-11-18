@@ -40,10 +40,11 @@ steps:
 
 ### 🔧 Composite Actions
 
-| Action          | Purpose                             | Key Features                                 |
-| --------------- | ----------------------------------- | -------------------------------------------- |
-| `docker-build`  | Build and push Docker images to ECR | Multi-platform support, automatic tagging    |
-| `lambda-deploy` | Deploy Docker images to Lambda      | Environment-aware, automatic role assumption |
+| Action          | Purpose                                       | Key Features                                                     |
+| --------------- | --------------------------------------------- | ---------------------------------------------------------------- |
+| `docker-build`  | Build and push Docker images to ECR           | Multi-platform support, automatic tagging                        |
+| `lambda-deploy` | Deploy Docker images to Lambda                | Environment-aware, automatic role assumption                     |
+| `image-exists`  | Refuse a release whose image was never pushed | Outputs the digest; works with any registry you are logged in to |
 
 ### 📦 Reusable Workflows
 
