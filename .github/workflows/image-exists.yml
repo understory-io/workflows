@@ -42,10 +42,19 @@ jobs:
           image: docker.io/library/alpine:never-pushed-0000000
           attempts: "1"
 
+      - name: An empty reference is refused
+        id: empty
+        continue-on-error: true
+        uses: ./.github/actions/image-exists
+        with:
+          image: ""
+
       - name: Check the outcomes
         env:
           DIGEST: ${{ steps.present.outputs.digest }}
           MISSING: ${{ steps.missing.outcome }}
+          EMPTY: ${{ steps.empty.outcome }}
         run: |
           case "$DIGEST" in sha256:*) ;; *) echo "::error::no digest for a present image: '$DIGEST'"; exit 1 ;; esac
           [ "$MISSING" = failure ] || { echo "::error::a missing image was not refused ($MISSING)"; exit 1; }
+          [ "$EMPTY" = failure ] || { echo "::error::an empty reference was not refused ($EMPTY)"; exit 1; }

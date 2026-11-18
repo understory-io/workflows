@@ -38,10 +38,17 @@ runs:
           echo "::error::no image reference was given"
           exit 1
         fi
+        if ! [[ $ATTEMPTS =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::attempts must be a positive integer, not '$ATTEMPTS'"
+          exit 1
+        fi
         err="$RUNNER_TEMP/image-exists.err"
         for attempt in $(seq 1 "$ATTEMPTS"); do
-          if digest=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' 2> "$err"); then
-            digest=${digest//\"/}
+          if digest=$(docker buildx imagetools inspect "$IMAGE" --format '{{.Manifest.Digest}}' 2> "$err"); then
+            if [[ $digest != sha256:* ]]; then
+              echo "::error::$IMAGE answered with '$digest', not a digest"
+              exit 1
+            fi
             echo "digest=$digest" >> "$GITHUB_OUTPUT"
             echo "### \`$IMAGE\` → \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
             echo "$IMAGE resolves to $digest"
