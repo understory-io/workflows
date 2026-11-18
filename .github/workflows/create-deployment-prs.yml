@@ -21,12 +21,18 @@ on:
         required: false
         default: false
         description: "Give the promotion branch the target branch as a second parent while keeping the source tree byte-for-byte. Set this when the target carries content the source never sees — a file the promotion itself generates — which otherwise conflicts on every cycle. Reverts anything committed straight to the target"
+      per_change:
+        type: boolean
+        required: false
+        default: false
+        description: "Open one promotion PR per change merged to the source (`release/auto-<target>-pr-<n>`: the target plus that change cherry-picked) instead of one `release/auto-<target>` PR carrying all of the source. A change that conflicts without an earlier one carries it. Call this workflow on pushes to the target as well, so open promotions are rebuilt and planned again on the new target and promoted ones close. Merge them with a merge commit: the `Promoted-from` trailer is how a promoted change is recognised. Ignores `prepare_command` and `record_target_ancestry`"
     secrets:
       token:
         required: true
 
 jobs:
   release-prs:
+    if: ${{ !inputs.per_change }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
     name: Update release PRs
@@ -112,3 +118,66 @@ jobs:
             Automated PR for releasing changes from ${{ github.ref_name }} into ${{ steps.detect-target-branch.outputs.TARGET_BRANCH }}
           maintainer-can-modify: false
           delete-branch: true
+
+  per-change-prs:
+    if: inputs.per_change
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    name: Update per-change release PRs
+    concurrency:
+      group: per-change-prs-${{ github.repository }}
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # Pushes to either side of a pair start a run: the source adds a change,
+      # the target rebases every open promotion and retires promoted ones.
+      - name: Detect promotion pair
+        id: pair
+        env:
+          PAIRS: ${{ inputs.promotionPairs }}
+          REF: ${{ github.ref_name }}
+        run: |
+          IFS=',' read -r -a pairs <<< "$PAIRS"
+          for pair in "${pairs[@]}"; do
+            key="${pair%%=*}"
+            value="${pair##*=}"
+            if [ "$REF" = "$key" ] || [ "$REF" = "$value" ]; then
+              echo "source=$key" >> "$GITHUB_OUTPUT"
+              echo "target=$value" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::$REF is in no promotion pair. Check promotionPairs."
+          exit 1
+
+      # Branches pushed with the default GITHUB_TOKEN start no workflows, and the
+      # target's plan has to run on each promotion PR.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.pair.outputs.target }}
+          fetch-depth: 0
+          token: ${{ secrets.token }}
+
+      - name: Checkout the promotion script
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: scripts/promote-per-change.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Open, rebuild and close promotion PRs
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          SOURCE: ${{ steps.pair.outputs.source }}
+          TARGET: ${{ steps.pair.outputs.target }}
+        run: |
+          script="$RUNNER_TEMP/promote-per-change.sh"
+          mv .understory-workflows/scripts/promote-per-change.sh "$script"
+          rm -rf .understory-workflows
+          bash "$script" "$SOURCE" "$TARGET"

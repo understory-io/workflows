@@ -146,9 +146,10 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - **Purpose**: Automatically update release pull requests
 - **Trigger**: `workflow_call`
-- **Key Inputs**: `promotionPairs` (required), `prepare_command` (optional), `record_target_ancestry` (optional)
+- **Key Inputs**: `promotionPairs` (required), `prepare_command` (optional), `record_target_ancestry` (optional), `per_change` (optional)
 - **Note**: `prepare_command` runs a mise task after the branch is reset to the source branch and before the PR is created, so anything it writes is committed with the promotion. Used by `whatsapp-templates` to generate its consumer API only on a commit that has passed the approval gate.
 - **Note**: `record_target_ancestry` merges the target into the promotion branch with `--strategy=ours` right after the reset, giving the promotion head the target as a parent without changing its tree. Without it the merge base is the previous promotion, so whatever `prepare_command` generated last cycle conflicts add/add with this cycle's. Off by default, because `--strategy=ours` would revert a hotfix committed straight to the target. The checkout is unconditionally full-depth: at depth 1 the merge sees unrelated histories.
+- **Note**: `per_change: true` replaces the single `release/auto-<target>` PR with one PR per change merged to the source, built by `scripts/promote-per-change.sh` (sparse-checked-out from this workflow's own commit, like the semgrep rules): `release/auto-<target>-pr-<n>` is the target plus that change cherry-picked with a `Promoted-from: <source sha>` trailer, so its plan holds only that change. A change that conflicts without an earlier pending one carries the fewest earlier changes that touched the conflicting paths. Callers must also trigger on pushes to the target: that run rebuilds open promotions on the new target and closes the ones whose change is promoted (by trailer, or by ancestry after an all-of-source merge). The prefix is `-pr-`, not `/pr-`, because a `release/auto-<target>/…` branch cannot coexist with the legacy `release/auto-<target>` ref. Test it without a remote with `DRY_RUN=1 scripts/promote-per-change.sh dev prod` in a full clone.
 
 #### 11. publish-releases (`publish-releases.yml`)
 
