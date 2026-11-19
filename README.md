@@ -133,7 +133,9 @@ The check to require in the ruleset is **`tests-passed / tests-passed`** (GitHub
 
 - The result is final once nothing has been running or appeared for `settle_seconds` (default 60), so a PR with nothing else to run passes in about a minute.
 - After `timeout_minutes` (default 45) it fails and names what is still running.
-- Only the newest run of each check counts, so a re-run that passes replaces the failure. The gate doesn't re-run itself, though: after re-running a failed check, re-run `tests-passed` too.
+- Only the newest run of each check counts, so a re-run that passes replaces the failure. The result is fixed once the gate finishes, though: after re-running a check, re-run `tests-passed` too, in either direction.
+- `ignore` lines also match as regular expressions against the whole name, so `.` matches any character; a bare job name such as `build` ignores it in every workflow. A deploy job that waits for an environment approval belongs here, or the gate times out.
+- A PR can edit its own copy of this file. When it becomes required, protect `.github/workflows/tests-passed.yml` with CODEOWNERS.
 - Dependabot's read-only token is enough; the gate only reads.
 
 ## Environment Conventions

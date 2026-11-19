@@ -95,7 +95,7 @@ jobs:
             try {
               self = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId })).data;
             } catch (e) {
-              throw new Error(`cannot read this workflow run (${e.status}): grant the calling job "actions: read", "checks: read" and "statuses: read"`);
+              throw new Error(`cannot read this workflow run (${e.status} ${e.message}); the calling job needs "actions: read", "checks: read" and "statuses: read"`);
             }
 
             // One row per check, latest result only.
@@ -105,49 +105,59 @@ jobs:
                 github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, filter: 'all', per_page: 100 }),
                 github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: sha, per_page: 100 }),
               ]);
+              const runBySuite = new Map(runs.map((run) => [run.check_suite_id, run]));
+              const isSelf = (cr, run) => run?.workflow_id === self.workflow_id || cr.check_suite?.id === self.check_suite_id;
 
-              // A workflow can run more than once on a commit (a push and a
-              // pull_request run, or a re-trigger). Only its newest run per
-              // event counts; each run's attempts share its check suite.
-              const runBySuite = new Map();
-              const newestRun = new Map();
-              for (const run of runs) {
-                runBySuite.set(run.check_suite_id, run);
-                const key = `${run.workflow_id}:${run.event}`;
-                if (!newestRun.has(key) || newestRun.get(key).id < run.id) newestRun.set(key, run);
-              }
-              const counts = (run) => run.workflow_id !== self.workflow_id && newestRun.get(`${run.workflow_id}:${run.event}`) === run;
-
-              // A re-run job gets a new check run under the same name; the newest wins.
-              const newestCheck = new Map();
+              // A workflow can run more than once on a commit: on push and on
+              // pull_request, or again for another PR event. As in GitHub's own
+              // required checks, the newest check of a name counts, here per
+              // workflow and event, so a later run that skips a job doesn't hide
+              // an earlier failure of it.
+              const groups = new Map();
               for (const cr of checkRuns) {
                 const run = runBySuite.get(cr.check_suite?.id);
-                if (run && !counts(run)) continue;
-                const key = run ? `run:${run.id}:${cr.name}` : `app:${cr.app?.id}:${cr.name}`;
-                if (!newestCheck.has(key) || newestCheck.get(key).cr.id < cr.id) newestCheck.set(key, { cr, run });
+                if (isSelf(cr, run)) continue;
+                const key = run ? `wf:${run.workflow_id}:${run.event}:${cr.name}` : `app:${cr.app?.id}:${cr.name}`;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push({ cr, run });
+              }
+              const kept = [];
+              for (const members of groups.values()) {
+                const top = Math.max(...members.map((m) => m.run?.id ?? 0));
+                const latest = members.filter((m) => (m.run?.id ?? 0) === top);
+                // A re-run attempt adds a newer check run of the same name, which
+                // replaces the old one. In a first attempt, two jobs may share a
+                // name, and both count.
+                const rerun = (latest[0].run?.run_attempt ?? 2) > 1;
+                kept.push(...(rerun ? [latest.reduce((a, b) => (a.cr.id > b.cr.id ? a : b))] : latest));
               }
 
               const rows = [];
               const runsWithChecks = new Set();
-              for (const { cr, run } of newestCheck.values()) {
-                if (run) runsWithChecks.add(run.id);
+              const runsWithFailures = new Set();
+              for (const { cr, run } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
                 const done = cr.status === 'completed';
-                rows.push({
-                  id: `check:${cr.id}`,
-                  name,
-                  result: done ? cr.conclusion : cr.status,
-                  state: ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail',
-                  url: cr.html_url,
-                });
+                const state = ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
+                if (run) runsWithChecks.add(run.id);
+                // An ignored failure explains its run's failure too.
+                if (run && done && !PASS.has(cr.conclusion)) runsWithFailures.add(run.id);
+                rows.push({ id: `check:${cr.id}`, name, result: done ? cr.conclusion : cr.status, state, url: cr.html_url });
               }
 
-              // A run with no jobs yet is still starting; one that ended with
-              // none never started (a broken workflow file) and leaves no check run.
+              // The newest run of each workflow and event also counts on its
+              // own. One with no jobs yet is still starting; one that ended with
+              // none never started (a broken workflow file); one that failed
+              // without a failed check still failed.
+              const newestRun = new Map();
+              for (const run of runs) {
+                if (run.workflow_id === self.workflow_id) continue;
+                const key = `${run.workflow_id}:${run.event}`;
+                if (!newestRun.has(key) || newestRun.get(key).id < run.id) newestRun.set(key, run);
+              }
               for (const run of newestRun.values()) {
-                if (!counts(run) || runsWithChecks.has(run.id)) continue;
                 const done = run.status === 'completed';
-                if (done && PASS.has(run.conclusion)) continue;
+                if (done ? PASS.has(run.conclusion) || runsWithFailures.has(run.id) : runsWithChecks.has(run.id)) continue;
                 const name = `${run.name} (workflow)`;
                 rows.push({
                   id: `run:${run.id}`,
@@ -185,11 +195,19 @@ jobs:
                 rows = await snapshot();
                 errors = 0;
               } catch (e) {
-                if (e.status === 403 && !/rate limit/i.test(e.message)) {
-                  throw new Error(`checks API refused (${e.message}): grant the calling job "actions: read", "checks: read" and "statuses: read"`);
+                const limited = e.status === 429 || /rate limit/i.test(e.message ?? '');
+                if (!limited && [403, 404, 422].includes(e.status)) {
+                  throw new Error(`cannot read the checks of ${sha} (${e.status} ${e.message}); check the sha input, and that the calling job grants "actions: read", "checks: read" and "statuses: read"`);
                 }
-                if (++errors >= 5) throw e;
+                // A failed poll proves nothing, so it never counts towards settling.
+                quietSince = null;
+                quietKey = null;
+                if (++errors >= 10 || Date.now() >= deadline) {
+                  throw new Error(`cannot read the checks of ${sha} after ${errors} tries in a row: ${e.status ?? ''} ${e.message}`);
+                }
                 core.warning(`poll failed (${e.status ?? ''} ${e.message}); retrying`);
+                await sleep(Math.min(pollSeconds * 1000, Math.max(deadline - Date.now(), 0)));
+                continue;
               }
               const pending = rows.filter((r) => r.state === 'pending');
               if (pending.length === 0) {

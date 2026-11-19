@@ -19,7 +19,7 @@ async function run(name, scenario, env = {}) {
       actions: { getWorkflowRun: async () => ({ data: { workflow_id: 99, check_suite_id: 999 } }), listWorkflowRunsForRepo: RUNS },
       checks: { listForRef: CHECKS }, repos: { listCommitStatusesForRef: STATUSES },
     },
-    paginate: async (ep) => { if (ep === RUNS) poll++; const s = scenario(Math.max(poll, 0)); return ep === RUNS ? s.runs ?? [] : ep === CHECKS ? s.checks ?? [] : s.statuses ?? []; },
+    paginate: async (ep) => { if (ep === RUNS) poll++; const s = scenario(Math.max(poll, 0)); if (s.error) throw Object.assign(new Error(s.error.message), s.error); return ep === RUNS ? s.runs ?? [] : ep === CHECKS ? s.checks ?? [] : s.statuses ?? []; },
   };
   const summary = { addHeading() { return this; }, addRaw() { return this; }, addTable(t) { log.table = t; return this; }, write: async () => {} };
   const core = { summary, info() {}, warning: (m) => log.warnings.push(m), error: (m) => log.errors.push(m), notice: (m) => log.notices.push(m), setFailed: (m) => { log.failed = m; } };
@@ -27,10 +27,14 @@ async function run(name, scenario, env = {}) {
   const FakeDate = { now: () => clock };
   Object.assign(process.env, { IGNORE: '', TIMEOUT_MINUTES: '45', SETTLE_SECONDS: '60', POLL_SECONDS: '30', SHA: 'abc' }, env);
   const fn = new AsyncFunction('github', 'context', 'core', 'setTimeout', 'Date', src);
-  await fn(github, { repo: { owner: 'o', repo: 'r' }, runId: 1 }, core, fakeSetTimeout, FakeDate);
+  try {
+    await fn(github, { repo: { owner: 'o', repo: 'r' }, runId: 1 }, core, fakeSetTimeout, FakeDate);
+  } catch (e) {
+    log.failed = `threw: ${e.message}`;
+  }
   return { ...log, polls: poll + 1, elapsed: (clock - 1_000_000) / 1000 };
 }
-const wrun = (id, wid, suite, extra = {}) => ({ id, workflow_id: wid, check_suite_id: suite, event: 'pull_request', name: `wf${wid}`, status: 'completed', conclusion: 'success', html_url: `u${id}`, ...extra });
+const wrun = (id, wid, suite, extra = {}) => ({ id, workflow_id: wid, check_suite_id: suite, event: 'pull_request', name: `wf${wid}`, run_attempt: 1, status: 'completed', conclusion: 'success', html_url: `u${id}`, ...extra });
 const cr = (id, name, suite, status, conclusion, extra = {}) => ({ id, name, check_suite: { id: suite }, status, conclusion, app: { id: 15368 }, html_url: `c${id}`, ...extra });
 const self = [wrun(1, 99, 999, { status: 'in_progress', conclusion: null }), wrun(0, 99, 998, { conclusion: 'cancelled' })];
 const selfChecks = [cr(1, 'tests-passed / tests-passed', 999, 'in_progress', null), cr(0, 'tests-passed / tests-passed', 998, 'completed', 'cancelled')];
@@ -48,7 +52,7 @@ expect('B waits for running check then passes', r.failed === null && r.polls >= 
 r = await run('C', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(11, 'build / binary', 50, 'completed', 'success')] }));
 expect('C failure -> red, lists it', /1 of 2 checks did not pass: wf1 \/ build \/ build \(failure\)/.test(r.failed ?? ''), r);
 
-r = await run('D', () => ({ runs: [...self, wrun(5, 1, 50)], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, 'completed', 'success')] }));
+r = await run('D', () => ({ runs: [...self, wrun(5, 1, 50, { run_attempt: 2 })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, 'completed', 'success')] }));
 expect('D re-run job: newest counts', r.failed === null, r);
 
 r = await run('E1', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' }), wrun(6, 1, 60)], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(13, 'build / build', 60, 'completed', 'success')] }));
@@ -87,5 +91,29 @@ expect('K newest status per context; error -> red', /1 of 2 .*other \(error\)/.t
 
 r = await run('L', (p) => ({ runs: [...self, wrun(5, 1, 50)], checks: [...selfChecks, cr(10, 'x', 50, 'completed', 'failure'), cr(11, 'y', 50, 'in_progress', null)] }), { TIMEOUT_MINUTES: '5' });
 expect('L timeout lists pending and failed', /still running: wf1 \/ y \(in_progress\); not passed: wf1 \/ x \(failure\)/.test(r.failed ?? ''), r);
+
+r = await run('M1', (p) => (p < 3 ? { error: { status: 502, message: 'Bad Gateway' } } : { runs: [...self, wrun(5, 1, 50)], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure')] }));
+expect('M1 failed polls never settle; real result after recovery', /did not pass/.test(r.failed ?? '') && r.polls >= 6, r);
+
+r = await run('M2', () => ({ error: { status: 500, message: 'boom' } }));
+expect('M2 polls that keep failing -> red, never green', /^threw: cannot read the checks of abc after 10 tries/.test(r.failed ?? ''), r);
+
+r = await run('M3', () => ({ error: { status: 422, message: 'No commit found for SHA: abc' } }));
+expect('M3 unknown sha -> red at once', /^threw: cannot read the checks of abc \(422/.test(r.failed ?? '') && r.polls === 1, r);
+
+r = await run('M4', (p) => (p < 2 ? { error: { status: 403, message: 'API rate limit exceeded' } } : { runs: self, checks: selfChecks }));
+expect('M4 rate limit is retried', r.failed === null && r.warnings.length === 2, r);
+
+r = await run('N', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' })], checks: [...selfChecks, cr(10, 'lint', 50, 'completed', 'failure'), cr(11, 'lint', 50, 'completed', 'success')] }));
+expect('N two jobs sharing a name in one attempt both count', /wf1 \/ lint \(failure\)/.test(r.failed ?? ''), r);
+
+r = await run('O', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' }), wrun(6, 1, 60)], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(13, 'build', 60, 'completed', 'skipped')] }));
+expect('O a later run that skips the job does not hide its failure', /wf1 \/ build \/ build \(failure\)/.test(r.failed ?? ''), r);
+
+r = await run('P', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' })], checks: [...selfChecks, cr(10, 'x', 50, 'completed', 'success')] }));
+expect('P a failed run without a failed check is red', /wf1 \(workflow\) \(failure\)/.test(r.failed ?? ''), r);
+
+r = await run('Q', () => ({ runs: [wrun(1, 99, 999, { status: 'in_progress', conclusion: null })].slice(1), checks: selfChecks.slice(0, 1) }));
+expect('Q own check is left out even before its run is listed', r.failed === null, r);
 
 process.exit(fails ? 1 : 0);
