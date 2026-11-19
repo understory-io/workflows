@@ -38,9 +38,16 @@ reverts the edit.
   Without the namespace a 7-day query over `dash0.spans` timed out on 2026-11-19, and
   `test_outcome=~"…"` also matched spans that have no `test.outcome`.
 - A test span is one with `test.name`; the test report's root span has none.
+- The Branch filter defaults to every branch, so the failure panels include PRs' red
+  work in progress. It stays that way because storefront's main E2E spans had no
+  `github.branch` before storefront#1823, and the same-commit panel needs PR runs.
 - "Passed and failed on the same commit" is how unit tests show as flaky, as they
-  don't retry. It needs two runs of one commit, such as a re-run of a failed job.
+  don't retry. It needs a failing run and a passing run of one commit, such as a
+  re-run of a failed job. It groups by `github_run_id` and `github_run_attempt` first:
+  one run can repeat a name (storefront's `it.each` makes duplicate full names), and a
+  name that both passed and failed within one run isn't flaky.
   It keeps to unit tests (`test_package!=""`): an E2E run tests whatever dev serves,
   so its commit doesn't pin the code under test.
 - Spans from before the E2E reporters sent `test.suite` and `github.*` show as a
-  suite with no name until they leave the window (14 days from 2026-11-19).
+  suite with no name until they leave the window: 14 days after storefront#1823 and
+  backoffice#6609 merge.

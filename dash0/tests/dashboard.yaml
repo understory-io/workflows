@@ -72,7 +72,8 @@ spec:
           name: Pass rate by suite
           description: Share of the tests that ran (skipped ones left out) and did not
             fail, over the window. A flaky E2E test, which passed on a retry, counts as
-            passed; the flaky panels list them.
+            passed; the flaky panels list them. Counts every branch, PRs' red work in
+            progress too; filter Branch to main for main's health.
         plugin:
           kind: GaugeChart
           spec:
@@ -116,7 +117,8 @@ spec:
       spec:
         display:
           name: Most failing tests
-          description: Failures per test over the window.
+          description: Failures per test over the window, on every branch, PRs' red work
+            in progress too; filter Branch to main for main's health.
         plugin:
           kind: GaugeChart
           spec:
@@ -185,9 +187,9 @@ spec:
         display:
           name: 'Flaky tests: passed and failed on the same commit'
           description: Unit tests only (they don't retry), counting the commits on which
-            a test both passed and failed, as a re-run does. E2E suites test whatever dev
-            serves, so their commit doesn't pin the code under test; their flaky tests are
-            in the retry panel. A test that fails on every run of a commit is broken, not
+            a test failed in one run and passed in another, as a re-run does. E2E suites
+            test whatever dev serves, so their commit doesn't pin the code under test;
+            their flaky tests are in the retry panel. A test that fails on every run of a commit is broken, not
             flaky, and shows under Most failing tests.
         plugin:
           kind: GaugeChart
@@ -203,20 +205,25 @@ spec:
                 spec:
                   query: >-
                     topk(15, count by (service_name, test_full_name) (
-                    (sum by (service_name, test_full_name, github_sha) (increase({otel_metric_name="dash0.spans",
+                    count by (service_name, test_full_name, github_sha) (
+                    sum by (service_name, test_full_name, github_sha, github_run_id, github_run_attempt) (increase({otel_metric_name="dash0.spans",
                     service_namespace="understory", test_package!="", test_outcome="unexpected", $service, $suite, $branch}[$window])) > 0)
                     and on (service_name, test_full_name, github_sha)
-                    (sum by (service_name, test_full_name, github_sha) (increase({otel_metric_name="dash0.spans",
-                    service_namespace="understory", test_package!="", test_outcome="expected", $service, $suite, $branch}[$window])) > 0)))
+                    count by (service_name, test_full_name, github_sha) (
+                    (sum by (service_name, test_full_name, github_sha, github_run_id, github_run_attempt) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_package!="", test_outcome="expected", $service, $suite, $branch}[$window])) > 0)
+                    unless on (service_name, test_full_name, github_sha, github_run_id, github_run_attempt)
+                    (sum by (service_name, test_full_name, github_sha, github_run_id, github_run_attempt) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_package!="", test_outcome="unexpected", $service, $suite, $branch}[$window])) > 0))))
                   seriesNameFormat: '{{ service_name }} · {{ test_full_name }}'
     testsRun:
       kind: Panel
       spec:
         display:
-          name: Tests run, by outcome
-          description: Every test span, by outcome. A drop to zero for a suite means its
-            reports stopped arriving, not that its tests passed.
-        plugin: {kind: TimeSeriesChart, spec: {}}
+          name: Tests run, by suite
+          description: Every test span, stacked by suite. A suite whose band drops to zero
+            stopped sending reports, which says nothing about its tests passing.
+        plugin: {kind: TimeSeriesChart, spec: {visual: {display: bar, stack: all}}}
         queries:
           - kind: TimeSeriesQuery
             spec:
@@ -224,6 +231,6 @@ spec:
                 kind: PrometheusTimeSeriesQuery
                 spec:
                   query: >-
-                    sum by (test_outcome) (increase({otel_metric_name="dash0.spans",
+                    sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
                     service_namespace="understory", test_name!="", $service, $suite, $branch}[$__interval]))
-                  seriesNameFormat: '{{ test_outcome }}'
+                  seriesNameFormat: '{{ service_name }} · {{ test_suite }}'
