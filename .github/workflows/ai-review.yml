@@ -39,9 +39,9 @@ on:
         type: number
         default: 3
       timeout_minutes:
-        description: Timeout of the review job, in minutes
+        description: Timeout of the review job, in minutes; at least 15, since Claude Code gets this less 9
         type: number
-        default: 20
+        default: 25
     secrets:
       anthropic_api_key:
         description: Anthropic API key. Without it the review is skipped with a notice.
@@ -81,7 +81,7 @@ jobs:
           skip=""
           if [ "$EVENT" != pull_request ]; then skip="it runs only on pull_request events, not $EVENT"
           elif [ "$DRAFT" = true ]; then skip="the PR is a draft; it runs when the PR is marked ready"
-          elif [ "$USER_TYPE" = Bot ] || [[ "$LOGIN" =~ ^(renovate|dependabot) ]]; then skip="the PR is from a bot ($LOGIN)"
+          elif [ "$USER_TYPE" = Bot ] || [[ "$LOGIN" =~ ^(renovate|dependabot|understory-services) ]]; then skip="the PR is from a bot ($LOGIN)"
           elif [ "$HAS_KEY" != true ]; then skip="no Anthropic API key reaches this workflow: an org admin adds the ANTHROPIC_API_KEY secret (fork PRs never get it). Nothing is wrong with this PR"
           fi
           if [ -n "$skip" ]; then echo "::notice title=AI review skipped::$skip"; fi
@@ -141,7 +141,7 @@ jobs:
           mkdir -p "$OUT_DIR"
           # Claude Code already refuses symlinks out of the checkout; drop them anyway. Names aren't printed: a
           # file name is PR content, and a line of it could be read as a workflow command.
-          echo "symlinks removed: $(find "$REPO_DIR" -path "$REPO_DIR/.git" -prune -o -type l -print0 -delete | tr -cd '\0' | wc -c)"
+          echo "symlinks removed: $(find "$REPO_DIR" -type l -not -path "$REPO_DIR/.git/*" -print0 -delete | tr -cd '\0' | wc -c)"
           node "$TOOLS/review.mjs" prepare
 
       - name: Skipped
@@ -150,9 +150,24 @@ jobs:
           SKIP: ${{ steps.prepare.outputs.skip }}
         run: echo "::notice title=AI review skipped::$SKIP"
 
+      # A push within this wait cancels the run (concurrency above) before it spends anything.
+      - name: Let quick pushes settle
+        if: steps.prepare.outcome == 'success' && steps.prepare.outputs.skip == '' && github.event.action == 'synchronize'
+        continue-on-error: true
+        run: sleep 90
+
+      # Its own step, without the key: npm install scripts never see it.
+      - name: Install Claude Code
+        id: install
+        if: steps.prepare.outcome == 'success' && steps.prepare.outputs.skip == ''
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_VERSION: 2.1.318
+        run: timeout 300 npm install --no-audit --no-fund --silent --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+
       - name: Review
         id: claude
-        if: steps.prepare.outcome == 'success' && steps.prepare.outputs.skip == '' && hashFiles('.ai-review-out/prompt.md') != ''
+        if: steps.install.outcome == 'success'
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.anthropic_api_key }}
@@ -160,12 +175,11 @@ jobs:
           EFFORT: ${{ inputs.effort }}
           MAX_TURNS: ${{ inputs.max_turns }}
           MAX_BUDGET_USD: ${{ inputs.max_budget_usd }}
-          CLAUDE_CODE_VERSION: 2.1.318
           TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
         run: |
-          # Stop Claude Code before the job's own timeout, so the job still ends green and says why.
-          export RUN_TIMEOUT_MS=$(( (TIMEOUT_MINUTES > 8 ? TIMEOUT_MINUTES - 5 : 3) * 60000 ))
-          npm install --no-audit --no-fund --silent --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+          # Stop Claude Code well before the job's own timeout (setup, the wait and the install take up to ~8 min),
+          # so the job still ends green and the comment says why.
+          export RUN_TIMEOUT_MS=$(( (TIMEOUT_MINUTES > 12 ? TIMEOUT_MINUTES - 9 : 3) * 60000 ))
           CLAUDE_BIN="$RUNNER_TEMP/claude/node_modules/.bin/claude" node "$TOOLS/review.mjs" run
 
       - name: Render the comment

@@ -62,6 +62,20 @@ await test('prepare lists deleted, lock and generated files but leaves them out 
   assert.ok(!p.includes('-gone()') && !p.includes('"a":1') && !p.includes('+y'), 'only app.js is in the diff');
 });
 
+await test('a PR cannot hide its code by marking it generated, and a rename stays a rename', () => {
+  const dir = repo({
+    before: { 'src/pay.js': 'pay()\n'.repeat(50), 'docs/a.md': 'x\n' },
+    after: { 'src/pay.js': 'pay()\n'.repeat(49) + 'steal()\n', '.gitattributes': 'src/** linguist-generated=true\n' },
+  });
+  execFileSync('git', ['-C', dir, 'mv', 'docs/a.md', 'docs/b.md']);
+  execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--amend', '--no-edit']);
+  const outDir = tmp();
+  cli('prepare', { REPO_DIR: dir, OUT_DIR: outDir, MAX_DIFF_KB: '100' });
+  const p = fs.readFileSync(path.join(outDir, 'prompt.md'), 'utf8');
+  assert.match(p, /\+steal\(\)/);
+  assert.match(p, /rename from docs\/a\.md/);
+});
+
 await test('prepare skips a diff over the limit, and a PR that changes nothing', () => {
   const big = repo({ before: { 'a.txt': 'a\n' }, after: { 'a.txt': 'b\n'.repeat(3000) } });
   assert.match(cli('prepare', { REPO_DIR: big, OUT_DIR: tmp(), MAX_DIFF_KB: '2' }).skip, /over the 2 KB limit/);
@@ -110,6 +124,8 @@ await test('render neutralises HTML, a fake marker, mentions and table breaks in
   assert.equal(body.split(MARKER).length, 2, 'only our own marker');
   assert.ok(!body.includes('<img') && !body.includes('@lars'));
   assert.match(body, /\\\| x y/);
+  const linked = renderBody(result(review([{ severity: 'low', title: 't', location: '', question: 'other', detail: '[login](https://evil) ![p](https://evil/p.png)' }])), opts).body;
+  assert.ok(!linked.includes('](https://evil') && !linked.includes('!['), 'no links or images');
 });
 
 await test('render reports an unfinished review without findings', () => {

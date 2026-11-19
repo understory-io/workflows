@@ -35,21 +35,18 @@ async function linear() {
     const res = await fetch('https://api.linear.app/graphql', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: env.LINEAR_API_KEY },
-      body: JSON.stringify({ query: 'query($id:String!){issue(id:$id){identifier title description}}', variables: { id: key } }),
+      body: JSON.stringify({ query: 'query($id:String!){issue(id:$id){identifier title description team{private}}}', variables: { id: key } }),
       signal: AbortSignal.timeout(15_000),
     });
     const issue = (await res.json().catch(() => null))?.data?.issue;
-    if (issue) found.push(`### ${issue.identifier}: ${issue.title}\n\n${(issue.description ?? '').slice(0, 20_000)}`);
+    // The author picks the key, so a private team's issue would otherwise leak into the comment.
+    if (issue && !issue.team?.private) found.push(`### ${issue.identifier}: ${issue.title}\n\n${(issue.description ?? '').slice(0, 20_000)}`);
   }
   fs.writeFileSync(out('linear.md'), found.join('\n\n'));
   console.log(`linked Linear issues read: ${found.length}`);
 }
 
-// Lock files and files marked linguist-generated are listed with their line counts but left out of the diff.
-const EXCLUDE = [
-  ':(exclude,attr:linguist-generated=true)',
-  ...['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'go.sum', 'Cargo.lock', 'uv.lock', '*.snap'].map((g) => `:(exclude,glob)**/${g}`),
-];
+const LOCK_FILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'go.sum', 'Cargo.lock', 'uv.lock']);
 
 export function buildPrompt({ repository, baseRef, title, body, issues, files, diff }) {
   // A tag the PR author can't guess, so their text can't close it and pose as ours.
@@ -69,16 +66,37 @@ export function buildPrompt({ repository, baseRef, title, body, issues, files, d
 }
 
 function prepare() {
-  const git = (...args) => execFileSync('git', ['-C', env.REPO_DIR, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 1 << 30 });
+  const base = env.BASE || 'HEAD^1';
+  const git = (args, opts = {}) => execFileSync('git', ['-C', env.REPO_DIR, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 1 << 30, ...opts });
   // --no-ext-diff/--no-textconv: never run a diff driver that the PR's .gitattributes names.
-  const range = ['--no-color', '--no-ext-diff', '--no-textconv', '-M', env.BASE || 'HEAD^1', 'HEAD'];
-  const deleted = new Set(git('diff', '--name-only', '--diff-filter=D', ...range).split('\n').filter(Boolean));
-  const stats = git('diff', '--numstat', ...range).split('\n').filter(Boolean)
+  const range = ['--no-color', '--no-ext-diff', '--no-textconv', '-M', base, 'HEAD'];
+  const deleted = new Set(git(['diff', '--name-only', '--diff-filter=D', ...range]).split('\n').filter(Boolean));
+  const stats = git(['diff', '--numstat', ...range]).split('\n').filter(Boolean)
     .map((l) => { const [a, r, f] = l.split('\t'); return `+${a} -${r} ${f}${deleted.has(f) ? ' (deleted)' : ''}`; });
-  const diff = git('diff', '--diff-filter=d', ...range, '--', '.', ...EXCLUDE);
+
+  // The diff leaves out deletions, lock files and what the *base* marks linguist-generated, read through a
+  // scratch index: the PR's own .gitattributes could otherwise hide its code from the review.
+  const tokens = git(['diff', '--name-status', '-z', '--diff-filter=d', ...range]).split('\0').filter(Boolean);
+  const entries = []; // one per changed file: its path, or a rename's old and new path, which must be diffed together
+  for (let i = 0; i < tokens.length;) {
+    const status = tokens[i++];
+    entries.push(/^[RC]/.test(status) ? [tokens[i++], tokens[i++]] : [tokens[i++]]);
+  }
+  const index = { env: { ...env, GIT_INDEX_FILE: out('base.index') } };
+  git(['read-tree', base], index);
+  const attrs = entries.length ? git(['check-attr', '--cached', '-z', '--stdin', 'linguist-generated'], { ...index, input: entries.flat().join('\0') }).split('\0') : [];
+  const generated = new Set();
+  for (let i = 0; i + 2 < attrs.length; i += 3) if (['true', 'set'].includes(attrs[i + 2])) generated.add(attrs[i]);
+  const skipped = (p) => generated.has(p) || LOCK_FILES.has(path.basename(p)) || p.endsWith('.snap');
+  const keep = entries.filter((e) => !skipped(e.at(-1)));
+  let diff = '';
+  for (let i = 0; i < keep.length; i += 200) {
+    diff += git(['diff', '--diff-filter=d', ...range, '--', ...keep.slice(i, i + 200).flat().map((p) => `:(literal)${p}`)]);
+  }
+
   const kb = Math.ceil(Buffer.byteLength(diff) / 1024);
   const max = Number(env.MAX_DIFF_KB);
-  console.log(`${stats.length} files changed, ${deleted.size} deleted, ${kb} KB of diff to review`);
+  console.log(`${stats.length} files changed, ${deleted.size} deleted, ${generated.size} generated, ${kb} KB of diff to review`);
   if (stats.length === 0) return setOutput('skip', 'the PR changes no files');
   if (kb > max) return setOutput('skip', `the diff is ${kb} KB, over the ${max} KB limit (deleted, lock and generated files don't count). Split the PR, or raise max_diff_kb`);
   const issues = fs.existsSync(out('linear.md')) ? fs.readFileSync(out('linear.md'), 'utf8').trim() : '';
@@ -99,12 +117,17 @@ function run() {
   ];
   // Only what Claude Code needs; nothing else from the runner's environment reaches it.
   const childEnv = Object.fromEntries(['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'ANTHROPIC_API_KEY'].filter((k) => env[k]).map((k) => [k, env[k]]));
+  // Files, not pipes: the grandchildren of a killed run can't keep this waiting on an open pipe.
   const r = spawnSync(env.CLAUDE_BIN || 'claude', args, {
-    cwd: env.REPO_DIR, env: { ...childEnv, DISABLE_AUTOUPDATER: '1' }, encoding: 'utf8', maxBuffer: 64 << 20,
-    stdio: [fs.openSync(out('prompt.md'), 'r'), 'pipe', 'pipe'], timeout: Number(env.RUN_TIMEOUT_MS || 20 * 60_000),
+    cwd: env.REPO_DIR, env: { ...childEnv, DISABLE_AUTOUPDATER: '1' }, killSignal: 'SIGKILL',
+    stdio: [fs.openSync(out('prompt.md'), 'r'), fs.openSync(out('claude.json'), 'w'), fs.openSync(out('claude.err'), 'w')],
+    timeout: Number(env.RUN_TIMEOUT_MS || 15 * 60_000),
   });
-  fs.writeFileSync(out('claude.json'), r.stdout ?? '');
-  if (r.status !== 0) console.log(`claude exited with ${r.status ?? r.signal}: ${redact(r.stderr ?? '', [env.ANTHROPIC_API_KEY]).slice(-2000)}`);
+  if (r.status !== 0) {
+    // Indented, so no line of it is read as a workflow command.
+    const err = redact(fs.readFileSync(out('claude.err'), 'utf8'), [env.ANTHROPIC_API_KEY]).slice(-2000).replace(/^/gm, '  ');
+    console.log(`claude exited with ${r.status ?? r.signal ?? r.error?.code}:\n${err}`);
+  }
 }
 
 export function redact(text, secrets = []) {
@@ -113,7 +136,9 @@ export function redact(text, secrets = []) {
 }
 
 // Model text goes into a comment: no HTML (and so no fake marker), no @mentions, one line per table cell.
-const text = (s) => String(s ?? '').replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;')).replace(/@(?=[\w-])/g, '@​');
+// Markdown links and images are broken up too, so a steered review can't post a phishing link or a tracking pixel.
+const text = (s) => String(s ?? '').replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;')).replace(/@(?=[\w-])/g, '@\u200b')
+  .replace(/!\[/g, '[').replace(/\]\(/g, '] (');
 const cell = (s) => text(s).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|');
 const code = (s) => (s ? `\`${String(s).replace(/[`\n]/g, '')}\`` : '');
 
