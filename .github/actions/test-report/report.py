@@ -153,7 +153,8 @@ def junit_location(case, junit_file):
             break
     else:
         return
-    line = re.search(re.escape(case.package) + r":(\d+):\d+", case.output)
+    # Not preceded by a path character, so `a.spec.ts` doesn't match `src/a.spec.ts:9:1`.
+    line = re.search(r"(?<![\w./@-])" + re.escape(case.package) + r":(\d+):\d+", case.output)
     if line:
         case.file = os.path.relpath(path, workspace)
         case.line = line.group(1)
@@ -427,7 +428,8 @@ def main():
 
     cases, quiet, unreadable = read_results(paths, env("GO_MODULE_DIR", "")) if paths else ([], 0, "")
     problem = problem or unreadable
-    leaves = counted(cases)
+    # A `/` in a JUnit name is only a subtest separator for Go.
+    leaves = counted(cases) if env("GO_TEST_LOG") else cases
     failed = [c for c in leaves if c.status == "failed"]
     skipped = sum(1 for c in leaves if c.status == "skipped")
     passed = sum(1 for c in leaves if c.status == "passed")
