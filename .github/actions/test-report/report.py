@@ -33,6 +33,8 @@ TASK_PREFIX = re.compile(r"^\[([^\]\s]+)\] ?(.*)$")
 
 env = os.environ.get
 TITLE = env("TITLE", "Tests")
+# What the first table column is: Go reports a package, JUnit from other runners a test file.
+SUITE = "Package" if env("GO_TEST_LOG") else "File"
 MARKER = f"<!-- test-report: {TITLE} -->"
 SERVER = env("GITHUB_SERVER_URL", "https://github.com")
 REPO = env("GITHUB_REPOSITORY", "")
@@ -133,6 +135,31 @@ def go_location(case, module, module_dir):
         case.line = line
 
 
+def junit_location(case, junit_file):
+    """The line of a failure in JUnit from a runner that names the test file as
+    the class (vitest does) and prints it with `:line:column` in the failure.
+    The class is relative to the project that ran the tests, which in a
+    monorepo is a directory above the JUnit file, so the file is looked for
+    there first and then at the repository root."""
+    workspace = os.path.realpath(env("GITHUB_WORKSPACE") or os.getcwd())
+    root = os.path.dirname(os.path.realpath(junit_file))
+    roots = []
+    while root.startswith(workspace + os.sep):
+        roots.append(root)
+        root = os.path.dirname(root)
+    for root in roots + [workspace]:
+        path = os.path.realpath(os.path.join(root, case.package))
+        if path.startswith(workspace + os.sep) and os.path.isfile(path):
+            break
+    else:
+        return
+    # Not preceded by a path character, so `a.spec.ts` doesn't match `src/a.spec.ts:9:1`.
+    line = re.search(r"(?<![\w./@-])" + re.escape(case.package) + r":(\d+):\d+", case.output)
+    if line:
+        case.file = os.path.relpath(path, workspace)
+        case.line = line.group(1)
+
+
 def read_results(paths, module_dir):
     """Returns the cases, the number of suites that passed without listing a
     test, and why the results can't be used, if they can't."""
@@ -170,6 +197,8 @@ def read_results(paths, module_dir):
                     case.output = case.output or suite_output or problem.get("message", "")
                     if module and own:
                         go_location(case, module, module_dir)
+                    elif not module_dir:
+                        junit_location(case, path)
                 cases.append(case)
     if any(not c.package for c in cases):
         return [], 0, (
@@ -212,7 +241,7 @@ def location(case, link):
 
 
 def failed_table(failed, link):
-    rows = ["| Failed test | Package | Line |", "|---|---|---|"]
+    rows = ["| Failed test | " + SUITE + " | Line |", "|---|---|---|"]
     for c in failed[:LISTED]:
         rows.append(f"| {cell(c.name or '(package)')} | {cell(c.package)} | {location(c, link)} |")
     if len(failed) > LISTED:
@@ -329,6 +358,12 @@ def publish_comment(api, pr, body, create):
         api("POST", f"issues/{pr}/comments", {"body": body})
 
 
+def head_moved(api, pr):
+    """Whether the PR has a newer commit than this run's. Runs of one PR can
+    finish out of order, and the older one must not overwrite the comment."""
+    return api("GET", f"pulls/{pr}")["head"]["sha"] != SHA
+
+
 def fence(text):
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
     return "`" * max(3, longest + 1)
@@ -363,7 +398,7 @@ def summary(outcome, tests, cases, failed, skipped, no_passing, problem, notes):
         out.append(f"{len(failed) - shown} more failed tests: see the log.\n\n")
     ranked = sorted((c for c in cases if c.status != "skipped" and c.secs > 0), key=lambda c: c.secs, reverse=True)[:SLOWEST]
     if ranked:
-        out.append("<details><summary>Slowest tests</summary>\n\n| Time | Test | Package |\n|---:|---|---|\n")
+        out.append("<details><summary>Slowest tests</summary>\n\n| Time | Test | " + SUITE + " |\n|---:|---|---|\n")
         out.extend(f"| {duration(c.secs)} | {cell(c.name)} | {cell(c.package)} |\n" for c in ranked)
         out.append("\n</details>\n\n")
     return "".join(out)
@@ -393,7 +428,8 @@ def main():
 
     cases, quiet, unreadable = read_results(paths, env("GO_MODULE_DIR", "")) if paths else ([], 0, "")
     problem = problem or unreadable
-    leaves = counted(cases)
+    # A `/` in a JUnit name is only a subtest separator for Go.
+    leaves = counted(cases) if env("GO_TEST_LOG") else cases
     failed = [c for c in leaves if c.status == "failed"]
     skipped = sum(1 for c in leaves if c.status == "skipped")
     passed = sum(1 for c in leaves if c.status == "passed")
@@ -432,7 +468,10 @@ def main():
             command_annotations(failed)
     if pr:
         try:
-            publish_comment(api, pr, body, create=not problem)
+            if head_moved(api, pr):
+                notes.append("The PR has a newer commit, so its run owns the PR comment and this one left it alone.")
+            else:
+                publish_comment(api, pr, body, create=not problem)
         except (urllib.error.URLError, OSError, ValueError, KeyError) as err:
             if denied(err):
                 notes.append("This job's token can't write PR comments (Dependabot, or the caller narrowed `permissions:`), so there is no PR comment.")
