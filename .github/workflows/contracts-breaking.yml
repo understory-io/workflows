@@ -66,6 +66,8 @@ jobs:
           BUF_MODULES: ${{ inputs.buf_modules }}
           BUF_EXCLUDE: ${{ inputs.buf_exclude }}
         run: |
+          # No -e: GitHub's bash runs with it, and the exit codes of buf and oasdiff are handled below.
+          set +e
           set -uo pipefail
           if [ -z "$BASE_SHA" ]; then
             echo "::error::No base commit to compare with. Call this workflow from a pull_request or merge_group trigger."
@@ -168,6 +170,8 @@ jobs:
           # Fallback when the labels cannot be read live. A re-run keeps the payload of the original run.
           PAYLOAD_LABELS: ${{ join(github.event.pull_request.labels.*.name, '|') }}
         run: |
+          # No -e: GitHub's bash runs with it, and the exit codes of buf and oasdiff are handled below.
+          set +e
           set -uo pipefail
           work="$RUNNER_TEMP/contracts"
           rows="$work/rows.md"
