@@ -1,0 +1,106 @@
+name: "Test report"
+description: >-
+  Report test results as a job summary, a check run with annotations and one
+  PR comment per title that each run updates, and upload the JUnit files as an
+  artifact. Raw test output goes only into the job summary, which the runner
+  masks like the log; the check and the comment carry test names and lines.
+  Reporting only: it never fails because a test failed, and without a token
+  that can write checks or comments (Dependabot, or a caller that narrowed
+  `permissions:`) it writes the summary only.
+
+inputs:
+  junit-path:
+    description: JUnit XML file(s); newline-separated globs, `**` allowed. Ignored when `go-test-log` is set.
+    required: false
+    default: ""
+  go-test-log:
+    description: >-
+      `go test -v` output to convert to JUnit with go-junit-report. Lines of
+      parallel mise tasks (prefixed `[task] `) are split per task first. A
+      missing or empty file means the tests didn't run.
+    required: false
+    default: ""
+  title:
+    description: >-
+      Names the check run and identifies the PR comment, so it must be unique
+      among the reports on one PR, e.g. `Go tests (bookings-core)`.
+    required: true
+  artifact-name:
+    description: Artifact the JUnit files are uploaded as; unique within the workflow run.
+    required: false
+    default: test-results
+  go-module-dir:
+    description: >-
+      Directory of the Go module (with its go.mod) the results come from. Points
+      each failure's annotation at the `_test.go` line it reports.
+    required: false
+    default: ""
+  test-outcome:
+    description: >-
+      Outcome of the step that ran the tests (`steps.<id>.outcome`). The PR
+      comment states it for the head commit even when there is no report, and
+      results that disagree with it (output that only looks like a failure, or
+      a failed step with no failed test) stay in the job summary.
+    required: false
+    default: ""
+  token:
+    description: Token for the check run and the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  tests:
+    description: Number of tests found, subtests counted instead of their parents.
+    value: ${{ steps.report.outputs.tests }}
+  failed:
+    description: Number of failed tests.
+    value: ${{ steps.report.outputs.failed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install go-junit-report
+      id: converter
+      if: inputs.go-test-log != ''
+      shell: bash
+      env:
+        LOG: ${{ inputs.go-test-log }}
+      run: |
+        [ -s "$LOG" ] || exit 0
+        bin="$RUNNER_TEMP/test-report-bin"
+        if GOFLAGS='' GOBIN="$bin" go install github.com/jstemmer/go-junit-report/v2@v2.1.0; then
+          echo "path=$bin/go-junit-report" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::Could not install go-junit-report, so there is no test report"
+        fi
+
+    - name: Report the results
+      id: report
+      shell: bash
+      env:
+        JUNIT_PATH: ${{ inputs.junit-path }}
+        GO_TEST_LOG: ${{ inputs.go-test-log }}
+        GO_JUNIT_REPORT: ${{ steps.converter.outputs.path }}
+        GO_MODULE_DIR: ${{ inputs.go-module-dir }}
+        TITLE: ${{ inputs.title }}
+        TEST_OUTCOME: ${{ inputs.test-outcome }}
+        TOKEN: ${{ inputs.token }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        JOB_ID: ${{ job.check_run_id }}
+      run: |
+        WORK_DIR=$(mktemp -d "$RUNNER_TEMP/test-report.XXXXXX")
+        export WORK_DIR
+        junit=$JUNIT_PATH
+        [ -n "$GO_TEST_LOG" ] && junit=$WORK_DIR/junit
+        printf 'junit<<EOF_JUNIT\n%s\nEOF_JUNIT\n' "$junit" >> "$GITHUB_OUTPUT"
+        python3 -I "$GITHUB_ACTION_PATH/report.py"
+
+    - name: Upload the JUnit files
+      if: ${{ !cancelled() && steps.report.outputs.files > 0 }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.report.outputs.junit }}
+        if-no-files-found: ignore
+        overwrite: true

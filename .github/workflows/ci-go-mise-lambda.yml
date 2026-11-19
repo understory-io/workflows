@@ -167,13 +167,47 @@ jobs:
           cat /tmp/localstack-pull.log
           cd ${{ inputs.app_dir }} && mise local:up
 
+      # The output is also kept for the test report; pipefail keeps mise's exit code.
       - name: Run tests
-        run: cd ${{ inputs.app_dir }} && mise test
+        id: tests
+        run: |
+          set -o pipefail
+          cd ${{ inputs.app_dir }} && mise test 2>&1 | tee "$RUNNER_TEMP/go-test.log"
         env:
           GOFLAGS: "-mod=readonly"
           # The race detector otherwise sleeps a second before every test binary
           # exits, which is most of the run time of a service with many packages.
           GORACE: "atexit_sleep_ms=0"
+
+      # Reporting never decides the build: these steps continue on error. They
+      # also run when the tests failed or never ran, so the PR comment never
+      # shows an older commit's result as this one's. The action comes from this
+      # workflow's own commit, so a caller gets the one matching the workflow it
+      # pinned, and a failed fetch fails this step, not the job's setup as an
+      # unresolvable `uses: …@main` would. Fetched after the tests so they never
+      # see the extra directory.
+      - name: Checkout the test-report action
+        id: report-action
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: .github/actions/test-report
+          persist-credentials: false
+
+      - name: Report test results
+        if: ${{ !cancelled() && steps.report-action.outcome == 'success' }}
+        continue-on-error: true
+        uses: ./.understory-workflows/.github/actions/test-report
+        with:
+          go-test-log: ${{ runner.temp }}/go-test.log
+          test-outcome: ${{ steps.tests.outcome }}
+          go-module-dir: ${{ inputs.app_dir }}
+          title: Go tests (${{ inputs.app_name }})
+          artifact-name: go-test-results-${{ inputs.app_name }}
 
       # Saved on every run, PRs included, under a key per run: a PR's next push then
       # restores its own build rather than main's, which can be a day older and
