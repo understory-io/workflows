@@ -6,6 +6,8 @@
 kind: Dashboard
 metadata:
   name: tests
+  dash0Extensions:
+    id: api-4b634195-9d5c-4667-a454-a0d8881f00e0
   labels:
     dash0.com/source: dash0-cli
 spec:
