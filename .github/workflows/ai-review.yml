@@ -27,9 +27,11 @@ on:
         type: string
         default: high
       max_diff_kb:
-        description: Skip the review when the diff, without deleted, lock and generated files, is larger than this
+        description: >-
+          Skip the review when the diff, without deleted, lock and generated files, is larger than this. With
+          `blocking`, a larger diff fails the check. 120 KB is about 35k tokens, re-read on every turn.
         type: number
-        default: 250
+        default: 120
       max_turns:
         description: Most agent turns per review
         type: number
@@ -62,8 +64,12 @@ jobs:
       group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     outputs:
-      body: ${{ steps.render.outputs.body }}
+      body: ${{ steps.render.outputs.body || steps.status.outputs.body }}
       high: ${{ steps.render.outputs.high }}
+      # review: a fresh review, posted or updated. status: this commit wasn't reviewed, which only updates an
+      # existing comment, so an older commit's review never stands as if it were current.
+      mode: ${{ steps.render.outputs.body && 'review' || 'status' }}
+      oversize: ${{ steps.prepare.outputs.oversize }}
     env:
       OUT_DIR: ${{ github.workspace }}/.ai-review-out
       REPO_DIR: ${{ github.workspace }}/pr
@@ -195,10 +201,37 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node "$TOOLS/review.mjs" render
 
+      - name: Say why this commit wasn't reviewed
+        id: status
+        if: ${{ !cancelled() && steps.render.outputs.body == '' && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GATE_SKIP: ${{ steps.gate.outputs.skip }}
+          PREPARE_SKIP: ${{ steps.prepare.outputs.skip }}
+          PREPARE: ${{ steps.prepare.outcome }}
+          INSTALL: ${{ steps.install.outcome }}
+          OVERSIZE: ${{ steps.prepare.outputs.oversize }}
+          BLOCKING: ${{ inputs.blocking }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          reason="${GATE_SKIP:-$PREPARE_SKIP}"
+          if [ -z "$reason" ] && [ "$PREPARE" = failure ]; then reason="the diff couldn't be prepared"; fi
+          if [ -z "$reason" ] && [ "$INSTALL" = failure ]; then reason="Claude Code couldn't be installed"; fi
+          if [ -z "$reason" ]; then reason="the review didn't run"; fi
+          effect="This never blocks a merge."
+          if [ "$BLOCKING" = true ] && [ "$OVERSIZE" = true ]; then effect="This fails the check, since it is blocking."; fi
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "body<<$delim"
+            printf '<!-- understory-ai-review -->\n### AI review: commit `%s` not reviewed\n\n%s. %s\n\n<sub>[run](%s)</sub>\n' "${HEAD_SHA:0:12}" "$reason" "$effect" "$RUN_URL"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
   report:
     name: Report
     needs: review
-    if: ${{ !cancelled() && needs.review.outputs.body != '' }}
+    if: ${{ !cancelled() && needs.review.outputs.body != '' && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -209,6 +242,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           BODY: ${{ needs.review.outputs.body }}
+          MODE: ${{ needs.review.outputs.mode }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
@@ -223,13 +257,19 @@ jobs:
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
             const mine = comments.find((c) => c.user?.login === 'github-actions[bot]' && c.body?.startsWith(MARKER));
             if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: process.env.BODY });
-            else await github.rest.issues.createComment({ owner, repo, issue_number, body: process.env.BODY });
+            else if (process.env.MODE === 'review') await github.rest.issues.createComment({ owner, repo, issue_number, body: process.env.BODY });
 
       - name: Verdict
         env:
           BLOCKING: ${{ inputs.blocking }}
           HIGH: ${{ needs.review.outputs.high }}
+          OVERSIZE: ${{ needs.review.outputs.oversize }}
         run: |
+          # A PR can't turn a red review green by growing past the limit.
+          if [ "$BLOCKING" = true ] && [ "$OVERSIZE" = true ]; then
+            echo "::error title=AI review::the diff is over max_diff_kb, so it wasn't reviewed; split the PR or raise the limit"
+            exit 1
+          fi
           if [ "$BLOCKING" = true ] && [ "${HIGH:-0}" != 0 ]; then
             echo "::error title=AI review::$HIGH high finding(s); see the PR comment"
             exit 1

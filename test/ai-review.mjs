@@ -76,9 +76,30 @@ await test('a PR cannot hide its code by marking it generated, and a rename stay
   assert.match(p, /rename from docs\/a\.md/);
 });
 
+await test("a PR's own -diff or binary attribute doesn't turn its code into 'Binary files differ'", () => {
+  const version = execFileSync('git', ['--version'], { encoding: 'utf8' }).match(/(\d+)\.(\d+)/).slice(1).map(Number);
+  if (version[0] === 2 && version[1] < 40) {
+    // GIT_ATTR_SOURCE needs git 2.40; the runner has it, so CI must not skip this.
+    assert.ok(!process.env.CI, `git ${version.join('.')} on CI is too old for GIT_ATTR_SOURCE`);
+    return console.log(`  skipped locally: git ${version.join('.')} < 2.40`);
+  }
+  const dir = repo({
+    before: { 'src/pay.js': 'pay()\n', 'lib/a.js': 'a\n' },
+    after: { 'src/pay.js': 'steal()\n', 'lib/a.js': 'b\n', '.gitattributes': 'src/** -diff\nlib/** binary\n' },
+  });
+  const outDir = tmp();
+  cli('prepare', { REPO_DIR: dir, OUT_DIR: outDir, MAX_DIFF_KB: '100' });
+  const p = fs.readFileSync(path.join(outDir, 'prompt.md'), 'utf8');
+  assert.ok(!p.includes('Binary files'), 'no file hidden as binary');
+  assert.match(p, /\+steal\(\)/);
+  assert.match(p, /\+1 -1 src\/pay\.js/);
+});
+
 await test('prepare skips a diff over the limit, and a PR that changes nothing', () => {
   const big = repo({ before: { 'a.txt': 'a\n' }, after: { 'a.txt': 'b\n'.repeat(3000) } });
-  assert.match(cli('prepare', { REPO_DIR: big, OUT_DIR: tmp(), MAX_DIFF_KB: '2' }).skip, /over the 2 KB limit/);
+  const over = cli('prepare', { REPO_DIR: big, OUT_DIR: tmp(), MAX_DIFF_KB: '2' });
+  assert.match(over.skip, /over the 2 KB limit/);
+  assert.equal(over.oversize, 'true', 'so a blocking check fails instead of passing');
   const none = repo({ before: { 'a.txt': 'a\n' }, after: {} });
   assert.match(cli('prepare', { REPO_DIR: none, OUT_DIR: tmp(), MAX_DIFF_KB: '2' }).skip, /changes no files/);
 });
@@ -128,6 +149,56 @@ await test('render neutralises HTML, a fake marker, mentions and table breaks in
   assert.ok(!linked.includes('](https://evil') && !linked.includes('!['), 'no links or images');
 });
 
+await test('the findings table is one block, so GitHub renders it as a table', () => {
+  const { body } = renderBody(result(review([
+    { severity: 'high', title: 'H', location: 'b:2', question: 'other', detail: 'd' },
+    { severity: 'low', title: 'L', location: 'a:1', question: 'other', detail: 'd' },
+  ])), opts);
+  assert.match(body, /\| Severity \| Finding \| Where \|\n\|---\|---\|---\|\n\| 🔴 high \| H \| `b:2` \|\n\| ⚪ low \| L \| `a:1` \|\n\n/);
+});
+
+// What a steered model might put in each field to get a live mention, link, image or reference into the comment.
+const ATTACKS = [
+  'a.js:1\r\r@lars <img src=x> [x](https://evil.example/a)',
+  '&#64;lars and &commat;lars and &lt;img src=x&gt;',
+  '[x][r]\n\n[r]: https://evil.example/ref',
+  'see https://evil.example/bare and www.evil.example',
+  'understory-io/backoffice#6611 and understory-io/workflows@b382a31',
+  '![p](https://evil.example/p.png) <a href="https://evil.example">x</a>',
+];
+const attacked = () => renderBody(result({ ...review(ATTACKS.map((a) => ({ severity: 'low', title: a, location: a, question: 'other', detail: a }))), summary: ATTACKS.join('\n') }), { ...opts, runUrl: 'https://github.com/understory-io/workflows/actions/runs/1' }).body;
+
+await test('the sanitiser leaves no mention, link, image or reference in the markdown', () => {
+  const body = attacked();
+  // A code span renders nothing live, so a location may keep its `@` or `://` there.
+  const prose = body.replace(/`[^`\n]*`/g, '');
+  assert.ok(!/@(?!\u200b)/.test(prose), 'every @ is broken');
+  assert.ok(!/&#|&commat;|<img|<a /i.test(body.replace(/&amp;|&lt;|&gt;/g, '')), 'no live entity or HTML');
+  assert.ok(!/https?:\/\/evil/.test(prose) && !/\bwww\.evil/.test(prose), 'no autolinkable URL');
+  assert.ok(!/\]\s*[([:]/.test(prose.replace('[run](https://github.com/understory-io/workflows/actions/runs/1)', '')), 'no link, reference or definition');
+  assert.ok(!/#\d/.test(body), 'no issue reference');
+  assert.ok(!body.includes('\r'), 'no carriage return');
+  assert.ok(body.includes('`a.js:1 @lars img src=x [x](https://evil.example/a)`'), 'the location stays one code span');
+});
+
+await test('GitHub renders the attacked comment with only our own link', async () => {
+  let token = process.env.GITHUB_TOKEN;
+  if (!token) try { token = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim(); } catch { /* none */ }
+  if (!token) {
+    assert.ok(!process.env.CI, 'CI must pass GITHUB_TOKEN to render through the markdown API');
+    return console.log('  skipped: no GitHub token');
+  }
+  const res = await fetch('https://api.github.com/markdown', {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
+    body: JSON.stringify({ text: attacked(), mode: 'gfm', context: 'understory-io/workflows' }),
+  });
+  assert.equal(res.status, 200, await res.clone().text());
+  const html = await res.text();
+  const links = [...html.matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1]).filter((h) => !h.startsWith('#'));
+  assert.deepEqual(links, ['https://github.com/understory-io/workflows/actions/runs/1']);
+  assert.ok(!/<img|user-mention|issue-link|commit-link/.test(html), html.match(/<img[^>]*>|class="[^"]*(user-mention|issue-link|commit-link)[^"]*"/)?.[0]);
+});
+
 await test('render reports an unfinished review without findings', () => {
   for (const [r, why] of [[null, /returned no review/], [{ subtype: 'error_max_budget_usd' }, /cost limit/], [{ subtype: 'error_max_turns' }, /out of turns/]]) {
     const { body, high } = renderBody(r, opts);
@@ -159,6 +230,10 @@ await test('the workflow keeps its safety rules', () => {
     assert.match(s, /continue-on-error: true/, `${name} cannot fail the run`);
   }
   assert.match(wf, /if \[ "\$BLOCKING" = true \] && \[ "\$\{HIGH:-0\}" != 0 \]; then/);
+  assert.match(wf, /if \[ "\$BLOCKING" = true \] && \[ "\$OVERSIZE" = true \]; then/, 'blocking fails a diff over the limit');
+  // A commit that wasn't reviewed only updates an existing comment; it never creates one.
+  assert.match(wf, /else if \(process\.env\.MODE === 'review'\) await github\.rest\.issues\.createComment/);
+  assert.match(wf, /mode: \$\{\{ steps\.render\.outputs\.body && 'review' \|\| 'status' \}\}/);
   assert.ok(!/ANTHROPIC_API_KEY[\s\S]*pull-requests: write[\s\S]*ANTHROPIC/.test(wf.split('report:')[1] ?? ''), 'report job has no key');
 });
 

@@ -39,4 +39,9 @@ jobs:
           node-version: 24
 
       - name: Run the tests
-        run: node test/ai-review.mjs
+        env:
+          # For rendering a hostile comment through GitHub's markdown API.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git --version
+          node test/ai-review.mjs

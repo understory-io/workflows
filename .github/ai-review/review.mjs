@@ -66,8 +66,11 @@ export function buildPrompt({ repository, baseRef, title, body, issues, files, d
 }
 
 function prepare() {
-  const base = env.BASE || 'HEAD^1';
-  const git = (args, opts = {}) => execFileSync('git', ['-C', env.REPO_DIR, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 1 << 30, ...opts });
+  const run = (args, opts = {}) => execFileSync('git', ['-C', env.REPO_DIR, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 1 << 30, ...opts });
+  const base = run(['rev-parse', env.BASE || 'HEAD^1']).trim();
+  // Every diff reads .gitattributes from the base (git 2.40+), so the PR can't hide its code behind its own
+  // `-diff`, `binary` or `linguist-generated`. Older git ignores the variable; CI's runners are newer.
+  const git = (args, opts = {}) => run(args, { ...opts, env: { ...env, ...opts.env, GIT_ATTR_SOURCE: base } });
   // --no-ext-diff/--no-textconv: never run a diff driver that the PR's .gitattributes names.
   const range = ['--no-color', '--no-ext-diff', '--no-textconv', '-M', base, 'HEAD'];
   const deleted = new Set(git(['diff', '--name-only', '--diff-filter=D', ...range]).split('\n').filter(Boolean));
@@ -98,6 +101,7 @@ function prepare() {
   const max = Number(env.MAX_DIFF_KB);
   console.log(`${stats.length} files changed, ${deleted.size} deleted, ${generated.size} generated, ${kb} KB of diff to review`);
   if (stats.length === 0) return setOutput('skip', 'the PR changes no files');
+  if (kb > max) setOutput('oversize', 'true');
   if (kb > max) return setOutput('skip', `the diff is ${kb} KB, over the ${max} KB limit (deleted, lock and generated files don't count). Split the PR, or raise max_diff_kb`);
   const issues = fs.existsSync(out('linear.md')) ? fs.readFileSync(out('linear.md'), 'utf8').trim() : '';
   const files = stats.length > 500 ? [...stats.slice(0, 500), `… and ${stats.length - 500} more`].join('\n') : stats.join('\n');
@@ -135,12 +139,22 @@ export function redact(text, secrets = []) {
   return text.replace(/(sk-ant-|lin_api_|github_pat_|gh[pousr]_)[A-Za-z0-9_-]{8,}/g, '[redacted]');
 }
 
-// Model text goes into a comment: no HTML (and so no fake marker), no @mentions, one line per table cell.
-// Markdown links and images are broken up too, so a steered review can't post a phishing link or a tracking pixel.
-const text = (s) => String(s ?? '').replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;')).replace(/@(?=[\w-])/g, '@\u200b')
-  .replace(/!\[/g, '[').replace(/\]\(/g, '] (');
+// Model text goes into a comment, where it must stay text: no HTML (so no fake marker), no entity that decodes
+// to one, no @mention, link, image, autolinked URL, reference definition, or issue reference (`#12`, `owner/repo#12`).
+export function text(s) {
+  return String(s ?? '').replace(/\r\n?/g, '\n')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/@/g, '@\u200b')
+    .replace(/!\[/g, '[').replace(/\]\s*[([:]/g, (m) => `${m[0]}\u200b${m.slice(1)}`)
+    .replace(/:\/\//g, ':\u200b//').replace(/\bwww\./gi, (m) => `${m.slice(0, 3)}\u200b.`)
+    .replace(/#(?=\d)/g, '#\u200b');
+}
 const cell = (s) => text(s).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|');
-const code = (s) => (s ? `\`${String(s).replace(/[`\n]/g, '')}\`` : '');
+// A path:line in a code span. Nothing but path characters, so it can't end the span or the line.
+export const code = (s) => {
+  const v = String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\w./:@\-[\]() +,=]/g, '');
+  return v ? `\`${v}\`` : '';
+};
 
 export function renderBody(result, { blocking, sha, runUrl, model }) {
   const review = result?.structured_output;
@@ -163,7 +177,7 @@ export function renderBody(result, { blocking, sha, runUrl, model }) {
     blocking ? '> A high finding fails this check.' : '> Advisory: this check never blocks a merge.',
   ];
   if (findings.length) {
-    lines.push('| Severity | Finding | Where |\n|---|---|---|', ...findings.map((f) => `| ${icon[f.severity]} ${f.severity} | ${cell(f.title)} | ${code(f.location)} |`));
+    lines.push(['| Severity | Finding | Where |', '|---|---|---|', ...findings.map((f) => `| ${icon[f.severity]} ${f.severity} | ${cell(f.title)} | ${code(f.location)} |`)].join('\n'));
     lines.push(`<details><summary>Evidence</summary>\n\n${findings.map((f) => `**${cell(f.title)}** ${code(f.location)}\n\n${text(f.detail)}`).join('\n\n')}\n\n</details>`);
   }
   lines.push('### The four questions', ...[
