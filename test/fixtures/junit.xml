@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="src/a.spec.ts">
+    <testcase classname="src/a.spec.ts" name="adds" time="0.25"/>
+    <testcase classname="src/a.spec.ts" name="subtracts" time="1.5"><failure message="no">expected 1</failure></testcase>
+    <testcase classname="src/a.spec.ts" name="later" time="0"><skipped/></testcase>
+  </testsuite>
+</testsuites>

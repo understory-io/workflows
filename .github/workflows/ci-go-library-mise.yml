@@ -5,6 +5,12 @@ on:
     secrets:
       go-private-modules-pat:
         required: true
+      # Optional: with both, the test report also sends each test to Dash0.
+      # Callers pass secrets.DASH0_OTLP_ENDPOINT_GRPC and secrets.DASH0_OTLP_HEADERS.
+      dash0-otlp-endpoint:
+        required: false
+      dash0-otlp-headers:
+        required: false
     inputs:
       timeout_minutes:
         description: "Max minutes before the job is cancelled (override the measured default)"
@@ -130,6 +136,8 @@ jobs:
           go-module-dir: .
           title: Go tests
           artifact-name: go-test-results
+          otlp-endpoint: ${{ secrets.dash0-otlp-endpoint }}
+          otlp-headers: ${{ secrets.dash0-otlp-headers }}
 
       - name: Build module
         run: mise run build
