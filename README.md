@@ -70,10 +70,10 @@ steps:
 
 `contracts-breaking` fails a PR that breaks a contract other services consume. It publishes nothing and needs no secrets.
 
-- **Buf:** finds every `buf.yaml` / `buf.work.yaml` (skipping `generated`, `gen`, `vendor`, `node_modules`) and runs `buf breaking <module> --against .git#ref=<base commit>,subdir=<module>`, with each module's own `breaking:` rules. Only modules the PR touches are checked.
+- **Buf:** finds every `buf.yaml` / `buf.work.yaml` (skipping any path with a `generated`, `gen`, `vendor`, `node_modules`, `dist` or `target` directory) and runs `buf breaking <module> --against .git#ref=<base commit>,subdir=<module>`, with each module's own `breaking:` rules. Only modules the PR touches are checked. `buf` reads the PR's own `buf.yaml`, so a PR that changes it gets a note in the summary to check the `breaking:` rules. A moved module shows as removed plus new.
 - **OpenAPI:** runs `oasdiff breaking` for each spec in `openapi_specs`, failing on ERR-level changes.
 - **Summary:** every contract and its result goes in the job summary. A repo with no contracts, or a PR that touches none, passes.
-- **Intentional breaks:** a PR labelled `breaking-change-approved` gets its breaking changes as warnings. Use it only for a step of expand, migrate, contract. Labelling after the run needs a re-run of the job.
+- **Intentional breaks:** a PR labelled `breaking-change-approved` gets its breaking changes as warnings. Use it only for a step of expand, migrate, contract. Anyone who can label a PR can approve their own break, so a reviewer should check why the label is there. Labelling after the run needs a re-run of the job.
 
 Call it from a workflow of its own, on `pull_request` with no `branches` or `paths` filter, and keep the job named `contracts`:
 
