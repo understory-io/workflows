@@ -1,0 +1,236 @@
+# Tests: pass rate, failures and flaky tests for every suite that sends a span per
+# test to Dash0: unit tests through the test-report action (`<repo>-tests`) and the
+# Playwright E2E reporters (`storefront-e2e`, `rm-e2e`). Every query counts spans
+# with `dash0.spans`; a test span is one with `test.name`, and the report's root
+# span has none. Apply with the dash0 CLI: see README.md.
+kind: Dashboard
+metadata:
+  name: tests
+  labels:
+    dash0.com/source: dash0-cli
+spec:
+  display:
+    name: Tests
+    description: Pass rate, failures and flaky tests per repository and suite, from the
+      unit test reports in CI and the E2E runs against dev. A test's span links to its
+      run (github.run_url). Filter by branch to see main only.
+  variables:
+    - kind: Dash0FilterVariable
+      spec:
+        name: service
+        attributeKey: service.name
+        capturingRegexp: ""
+        dependsOn: []
+        display: {name: Repository, description: "<repo>-tests for unit tests, storefront-e2e and rm-e2e for E2E", hidden: false}
+        operator: is_any
+        values: []
+    - kind: Dash0FilterVariable
+      spec:
+        name: suite
+        attributeKey: test.suite
+        capturingRegexp: ""
+        dependsOn: [service]
+        display: {name: Suite, description: "The test report's title, or the E2E workflow", hidden: false}
+        operator: is_any
+        values: []
+    - kind: Dash0FilterVariable
+      spec:
+        name: branch
+        attributeKey: github.branch
+        capturingRegexp: ""
+        dependsOn: [service]
+        display: {name: Branch, description: "main for merged code; a PR's head branch otherwise", hidden: false}
+        operator: is_any
+        values: []
+    - kind: ListVariable
+      spec:
+        name: window
+        display: {name: Window, description: The window the rankings and the pass rate count over, hidden: false}
+        allowAllValue: false
+        allowMultiple: false
+        defaultValues: [7d]
+        plugin:
+          kind: StaticListVariable
+          spec:
+            values: [{value: 1d}, {value: 7d}, {value: 14d}]
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - {x: 0, "y": 0, width: 12, height: 9, content: {$ref: '#/spec/panels/passRate'}}
+          - {x: 12, "y": 0, width: 12, height: 9, content: {$ref: '#/spec/panels/failures'}}
+          - {x: 0, "y": 9, width: 12, height: 10, content: {$ref: '#/spec/panels/mostFailing'}}
+          - {x: 12, "y": 9, width: 12, height: 10, content: {$ref: '#/spec/panels/failedRuns'}}
+          - {x: 0, "y": 19, width: 12, height: 10, content: {$ref: '#/spec/panels/flakyRetried'}}
+          - {x: 12, "y": 19, width: 12, height: 10, content: {$ref: '#/spec/panels/flakySameCommit'}}
+          - {x: 0, "y": 29, width: 24, height: 8, content: {$ref: '#/spec/panels/testsRun'}}
+  panels:
+    passRate:
+      kind: Panel
+      spec:
+        display:
+          name: Pass rate by suite
+          description: Share of the tests that ran (skipped ones left out) and did not
+            fail, over the window. A flaky E2E test, which passed on a retry, counts as
+            passed; the flaky panels list them. Counts every branch, PRs' red work in
+            progress too; filter Branch to main for main's health.
+        plugin:
+          kind: GaugeChart
+          spec:
+            calculation: last-number
+            dash0Extensions: {displayMode: horizontal-bar}
+            format: {unit: percent-decimal, decimalPlaces: 1}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    1 - (sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome="unexpected", $service, $suite, $branch}[$window]))
+                    or 0 * sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome!="skipped", test_name!="", $service, $suite, $branch}[$window])))
+                    / sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome!="skipped", test_name!="", $service, $suite, $branch}[$window]))
+                  seriesNameFormat: '{{ service_name }} · {{ test_suite }}'
+    failures:
+      kind: Panel
+      spec:
+        display:
+          name: Failed tests, by suite
+          description: Tests that failed (E2E after their retries). PR branches fail on
+            purpose while work is in progress; filter Branch to main for regressions.
+        plugin: {kind: TimeSeriesChart, spec: {}}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome="unexpected", $service, $suite, $branch}[$__interval]))
+                  seriesNameFormat: '{{ service_name }} · {{ test_suite }}'
+    mostFailing:
+      kind: Panel
+      spec:
+        display:
+          name: Most failing tests
+          description: Failures per test over the window, on every branch, PRs' red work
+            in progress too; filter Branch to main for main's health.
+        plugin:
+          kind: GaugeChart
+          spec:
+            calculation: last-number
+            dash0Extensions: {displayMode: horizontal-bar}
+            format: {unit: decimal, decimalPlaces: 0}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    topk(15, sum by (service_name, test_full_name) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome="unexpected", $service, $suite, $branch}[$window])))
+                  seriesNameFormat: '{{ service_name }} · {{ test_full_name }}'
+    failedRuns:
+      kind: Panel
+      spec:
+        display:
+          name: Runs with the most failures
+          description: Failed tests per run, named by branch and run URL. Open the run
+            URL for the report, or filter Tracing by github.run_url for its spans.
+        plugin:
+          kind: GaugeChart
+          spec:
+            calculation: last-number
+            dash0Extensions: {displayMode: horizontal-bar}
+            format: {unit: decimal, decimalPlaces: 0}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    topk(15, sum by (service_name, github_branch, github_run_url) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome="unexpected", $service, $suite, $branch}[$window])))
+                  seriesNameFormat: '{{ service_name }} · {{ github_branch }} · {{ github_run_url }}'
+    flakyRetried:
+      kind: Panel
+      spec:
+        display:
+          name: 'Flaky E2E tests: passed on a retry'
+          description: Playwright's `flaky` outcome, counted per test over the window.
+            Only E2E suites retry, so unit tests never show here.
+        plugin:
+          kind: GaugeChart
+          spec:
+            calculation: last-number
+            dash0Extensions: {displayMode: horizontal-bar}
+            format: {unit: decimal, decimalPlaces: 0}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    topk(15, sum by (service_name, test_full_name) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_outcome="flaky", $service, $suite, $branch}[$window])))
+                  seriesNameFormat: '{{ service_name }} · {{ test_full_name }}'
+    flakySameCommit:
+      kind: Panel
+      spec:
+        display:
+          name: 'Flaky tests: passed and failed on the same commit'
+          description: Unit tests only (they don't retry), counting the commits on which
+            a test failed in one run and passed in another, as a re-run does. E2E suites
+            test whatever dev serves, so their commit doesn't pin the code under test;
+            their flaky tests are in the retry panel. A test that fails on every run of a commit is broken, not
+            flaky, and shows under Most failing tests.
+        plugin:
+          kind: GaugeChart
+          spec:
+            calculation: last-number
+            dash0Extensions: {displayMode: horizontal-bar}
+            format: {unit: decimal, decimalPlaces: 0}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    topk(15, count by (service_name, test_full_name) (
+                    count by (service_name, test_full_name, github_sha) (
+                    sum by (service_name, test_full_name, github_sha, github_run_id, github_run_attempt) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_package!="", test_outcome="unexpected", $service, $suite, $branch}[$window])) > 0)
+                    and on (service_name, test_full_name, github_sha)
+                    count by (service_name, test_full_name, github_sha) (
+                    (sum by (service_name, test_full_name, github_sha, github_run_id, github_run_attempt) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_package!="", test_outcome="expected", $service, $suite, $branch}[$window])) > 0)
+                    unless on (service_name, test_full_name, github_sha, github_run_id, github_run_attempt)
+                    (sum by (service_name, test_full_name, github_sha, github_run_id, github_run_attempt) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_package!="", test_outcome="unexpected", $service, $suite, $branch}[$window])) > 0))))
+                  seriesNameFormat: '{{ service_name }} · {{ test_full_name }}'
+    testsRun:
+      kind: Panel
+      spec:
+        display:
+          name: Tests run, by suite
+          description: Every test span, stacked by suite. A suite whose band drops to zero
+            stopped sending reports, which says nothing about its tests passing.
+        plugin: {kind: TimeSeriesChart, spec: {visual: {display: bar, stack: all}}}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: >-
+                    sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
+                    service_namespace="understory", test_name!="", $service, $suite, $branch}[$__interval]))
+                  seriesNameFormat: '{{ service_name }} · {{ test_suite }}'
