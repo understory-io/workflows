@@ -1,6 +1,6 @@
 // Tests for .github/ai-review/review.mjs and the safety rules of ai-review.yml: node test/ai-review.mjs
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -126,6 +126,56 @@ const result = (review, extra = {}) => ({ structured_output: review, num_turns: 
 const review = (findings) => ({ summary: 'S', invariants: 'I', existing_data: 'E', blast_radius: 'B', proving_tests: 'P', findings });
 const opts = { blocking: false, sha: 'abc', runUrl: 'https://run', model: 'm' };
 
+await test('run stops Claude Code 4 minutes before the job times out, and says so', () => {
+  const dir = tmp();
+  const fake = path.join(dir, 'claude');
+  fs.writeFileSync(fake, `#!/bin/sh\ntouch "${dir}/started"\nsleep 120\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'prompt.md'), 'PROMPT');
+  const env = { CLAUDE_BIN: fake, OUT_DIR: dir, REPO_DIR: dir, MODEL: 'm', EFFORT: 'high', MAX_TURNS: '5', MAX_BUDGET_USD: '1' };
+  const t0 = Date.now();
+  // 62 s left after the reserve: just over the 60 s it needs to start at all.
+  cli('run', { ...env, JOB_DEADLINE: String(Math.floor(t0 / 1000) + 4 * 60 + 62) });
+  assert.ok(Date.now() - t0 < 75_000, `stopped after ${Date.now() - t0} ms`);
+  const timedOut = JSON.parse(fs.readFileSync(path.join(dir, 'claude.json'), 'utf8'));
+  assert.equal(timedOut.subtype, 'error_timeout');
+  assert.match(renderBody(timedOut, opts).body, /ran out of time/);
+
+  fs.rmSync(path.join(dir, 'started'));
+  cli('run', { ...env, JOB_DEADLINE: String(Math.floor(Date.now() / 1000) + 4 * 60 + 30) });
+  assert.ok(!fs.existsSync(path.join(dir, 'started')), 'with under a minute left it never starts');
+  assert.match(renderBody(JSON.parse(fs.readFileSync(path.join(dir, 'claude.json'), 'utf8')), opts).body, /no time left/);
+});
+
+await test('the review job always gets to render and post before it times out', () => {
+  const job = fs.readFileSync('.github/workflows/ai-review.yml', 'utf8').split('\n  report:')[0];
+  const steps = job.split(/\n {6}- name: /).slice(1).map((st) => ({ name: st.split('\n')[0], body: st, minutes: Number(st.match(/\n {8}timeout-minutes: (\d+)\n/)?.[1]) }));
+  // The gate starts with the job; Review stops Claude Code by JOB_DEADLINE; Skipped only echoes.
+  const bounded = steps.filter((st) => !['Decide whether to review', 'Skipped', 'Review'].includes(st.name));
+  for (const st of bounded) assert.ok(st.minutes > 0, `${st.name} has its own timeout-minutes`);
+  const after = bounded.slice(bounded.findIndex((st) => st.name === 'Render the comment'));
+  const sum = (l) => l.reduce((n, st) => n + st.minutes, 0);
+  assert.ok(sum(after) <= 3, 'render and status fit in the 4 minutes Claude Code leaves');
+  assert.ok(sum(bounded) <= 14, `the bounded steps (${sum(bounded)} min) fit in the minimum timeout_minutes of 15`);
+
+  const gate = steps[0].body.split('run: |\n')[1].replace(/^ {10}/gm, '');
+  const runGate = (minutes) => {
+    const dir = tmp();
+    for (const f of ['env', 'out']) fs.writeFileSync(path.join(dir, f), '');
+    const r = spawnSync('bash', ['-e', '-c', gate], { encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_ENV: path.join(dir, 'env'), GITHUB_OUTPUT: path.join(dir, 'out'), EVENT: 'pull_request', HAS_KEY: 'true', TIMEOUT_MINUTES: minutes } });
+    return { ...r, env: fs.readFileSync(path.join(dir, 'env'), 'utf8'), out: fs.readFileSync(path.join(dir, 'out'), 'utf8') };
+  };
+  for (const bad of ['14', '0', '20.5', 'x']) {
+    const r = runGate(bad);
+    assert.equal(r.status, 1, `timeout_minutes ${bad} fails`);
+    assert.match(r.stdout, /::error title=AI review::timeout_minutes is .*at least 15/);
+    assert.match(r.out, /^skip=timeout_minutes/m, 'so the comment says why');
+  }
+  const ok = runGate('25');
+  assert.equal(ok.status, 0, ok.stderr);
+  const deadline = Number(ok.env.match(/^JOB_DEADLINE=(\d+)$/m)?.[1]);
+  assert.ok(Math.abs(deadline - (Date.now() / 1000 + 25 * 60)) < 5, `deadline ${deadline}`);
+});
+
 await test('render counts high findings and puts them first', () => {
   const { body, high } = renderBody(result(review([
     { severity: 'low', title: 'L', location: 'a:1', question: 'other', detail: 'd' },
@@ -165,8 +215,20 @@ const ATTACKS = [
   'see https://evil.example/bare and www.evil.example',
   'understory-io/backoffice#6611 and understory-io/workflows@b382a31',
   '![p](https://evil.example/p.png) <a href="https://evil.example">x</a>',
+  // Redaction must not rebuild what text() broke: a token in front of `(`, `!` or `:` once became a live link.
+  'sk-ant-aaaaaaaaaaaa(//evil.example/phish) !sk-ant-bbbbbbbbbbbb(//evil.example/p.png)',
+  'sk-ant-cccccccccccc: //evil.example/ref',
+  'GH-12 and gh-12',
+  // An unclosed fence would swallow the rest of the comment, footer and run link included.
+  '```',
+  '  ~~~~',
 ];
-const attacked = () => renderBody(result({ ...review(ATTACKS.map((a) => ({ severity: 'low', title: a, location: a, question: 'other', detail: a }))), summary: ATTACKS.join('\n') }), { ...opts, runUrl: 'https://github.com/understory-io/workflows/actions/runs/1' }).body;
+// Through the CLI, so it is the same render and redaction CI runs.
+const attacked = () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'claude.json'), JSON.stringify(result({ ...review(ATTACKS.map((a) => ({ severity: 'low', title: a, location: a, question: 'other', detail: a }))), summary: ATTACKS.join('\n'), invariants: '```js' })));
+  return cli('render', { OUT_DIR: dir, MODEL: 'm', HEAD_SHA: 'abc', RUN_URL: 'https://github.com/understory-io/workflows/actions/runs/1' }).body;
+};
 
 await test('the sanitiser leaves no mention, link, image or reference in the markdown', () => {
   const body = attacked();
@@ -177,6 +239,9 @@ await test('the sanitiser leaves no mention, link, image or reference in the mar
   assert.ok(!/https?:\/\/evil/.test(prose) && !/\bwww\.evil/.test(prose), 'no autolinkable URL');
   assert.ok(!/\]\s*[([:]/.test(prose.replace('[run](https://github.com/understory-io/workflows/actions/runs/1)', '')), 'no link, reference or definition');
   assert.ok(!/#\d/.test(body), 'no issue reference');
+  assert.ok(!/\bGH-\d/i.test(prose), 'no GH- issue reference');
+  assert.ok(!/^ {0,3}(```|~~~)/m.test(body), 'no line opens a code fence');
+  assert.ok(!/sk-ant-/.test(body) && body.includes('‹redacted›'), 'tokens redacted, without brackets');
   assert.ok(!body.includes('\r'), 'no carriage return');
   assert.ok(body.includes('`a.js:1 @lars img src=x [x](https://evil.example/a)`'), 'the location stays one code span');
 });
@@ -197,6 +262,7 @@ await test('GitHub renders the attacked comment with only our own link', async (
   const links = [...html.matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1]).filter((h) => !h.startsWith('#'));
   assert.deepEqual(links, ['https://github.com/understory-io/workflows/actions/runs/1']);
   assert.ok(!/<img|user-mention|issue-link|commit-link/.test(html), html.match(/<img[^>]*>|class="[^"]*(user-mention|issue-link|commit-link)[^"]*"/)?.[0]);
+  assert.ok(!/<pre/.test(html) && /it can be wrong/.test(html), 'no code block, and the footer is shown');
 });
 
 await test('render reports an unfinished review without findings', () => {
@@ -213,7 +279,7 @@ await test('render redacts the keys it was given and anything shaped like a toke
   const o = cli('render', { OUT_DIR: dir, ANTHROPIC_API_KEY: 'MYSECRETVALUE1', MODEL: 'm', HEAD_SHA: 'abc', RUN_URL: 'u' });
   assert.ok(!/MYSECRETVALUE1|sk-ant-api03|ghp_/.test(o.body));
   assert.equal(o.high, '0');
-  assert.equal(redact('x lin_api_abcdefghijk y'), 'x [redacted] y');
+  assert.equal(redact('x lin_api_abcdefghijk y'), 'x ‹redacted› y');
 });
 
 await test('the workflow keeps its safety rules', () => {

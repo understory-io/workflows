@@ -208,7 +208,7 @@ jobs:
 - **Skips with a notice, never red:** no `ANTHROPIC_API_KEY` (also on fork PRs), drafts, bots (Renovate, Dependabot, Crowdin's `understory-services`), a diff over `max_diff_kb`. Deleted, lock and generated files (`linguist-generated` in the base branch's `.gitattributes`) are listed by name and don't count towards the limit. Every diff reads `.gitattributes` from the base, so a PR's own `-diff` or `binary` can't hide its code.
 - **Linear:** the issue key comes from the branch or title; issues of private teams are never read.
 - **Cost:** each review stops at `max_turns` (40) and `max_budget_usd` ($3), about $0.50 in calibration. A new push cancels the review still running, and a review after a push waits 90 s first, so a burst of pushes is reviewed once. Set a monthly spend limit on the Anthropic workspace that owns the key.
-- **`tests-passed` waits for it** (up to `timeout_minutes`, 25), so keep the gate's own timeout above that.
+- **Time:** `timeout_minutes` (25, at least 15) bounds the job. Claude Code stops 4 minutes before it, so the comment always says what happened. `tests-passed` waits for it, so keep the gate's own timeout above that.
 - **Safety:** call it from `pull_request`, never `pull_request_target`. Claude Code runs with Read, Grep and Glob only, confined to the checkout, and gets no token but its own key. A separate job with no key posts the comment.
 
 ## Environment Conventions

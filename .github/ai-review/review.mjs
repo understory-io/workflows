@@ -109,6 +109,8 @@ function prepare() {
   setOutput('skip', '');
 }
 
+const RESERVE_MS = 4 * 60_000;
+
 function run() {
   const args = [
     '-p', '--output-format', 'json', '--no-session-persistence',
@@ -119,14 +121,22 @@ function run() {
     '--append-system-prompt-file', path.join(here, 'prompt.md'),
     '--json-schema', fs.readFileSync(path.join(here, 'schema.json'), 'utf8'),
   ];
+  // JOB_DEADLINE (epoch seconds) is when the job times out. Claude Code stops RESERVE_MS before it, so the job
+  // still renders and posts the comment; a job killed by its timeout would leave an older review standing.
+  const timeout = env.JOB_DEADLINE ? Number(env.JOB_DEADLINE) * 1000 - Date.now() - RESERVE_MS : 15 * 60_000;
+  if (!(timeout >= 60_000)) {
+    fs.writeFileSync(out('claude.json'), JSON.stringify({ subtype: 'error_no_time' }));
+    return console.log('no time left before the job times out: not running Claude Code');
+  }
   // Only what Claude Code needs; nothing else from the runner's environment reaches it.
   const childEnv = Object.fromEntries(['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'ANTHROPIC_API_KEY'].filter((k) => env[k]).map((k) => [k, env[k]]));
   // Files, not pipes: the grandchildren of a killed run can't keep this waiting on an open pipe.
   const r = spawnSync(env.CLAUDE_BIN || 'claude', args, {
     cwd: env.REPO_DIR, env: { ...childEnv, DISABLE_AUTOUPDATER: '1' }, killSignal: 'SIGKILL',
     stdio: [fs.openSync(out('prompt.md'), 'r'), fs.openSync(out('claude.json'), 'w'), fs.openSync(out('claude.err'), 'w')],
-    timeout: Number(env.RUN_TIMEOUT_MS || 15 * 60_000),
+    timeout,
   });
+  if (r.error?.code === 'ETIMEDOUT') fs.writeFileSync(out('claude.json'), JSON.stringify({ subtype: 'error_timeout' }));
   if (r.status !== 0) {
     // Indented, so no line of it is read as a workflow command.
     const err = redact(fs.readFileSync(out('claude.err'), 'utf8'), [env.ANTHROPIC_API_KEY]).slice(-2000).replace(/^/gm, '  ');
@@ -134,20 +144,28 @@ function run() {
   }
 }
 
+// No markdown in the placeholder: `[redacted]` next to model text once made a link, image or reference definition.
 export function redact(text, secrets = []) {
-  for (const s of secrets) if (s && s.length >= 8) text = text.split(s).join('[redacted]');
-  return text.replace(/(sk-ant-|lin_api_|github_pat_|gh[pousr]_)[A-Za-z0-9_-]{8,}/g, '[redacted]');
+  for (const s of secrets) if (s && s.length >= 8) text = text.split(s).join('‹redacted›');
+  return text.replace(/(sk-ant-|lin_api_|github_pat_|gh[pousr]_)[A-Za-z0-9_-]{8,}/g, '‹redacted›');
 }
+// Every string of the model's review, redacted before text() or code() sanitises it.
+const redactAll = (v, secrets) => (typeof v === 'string' ? redact(v, secrets)
+  : Array.isArray(v) ? v.map((x) => redactAll(x, secrets))
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactAll(x, secrets)])) : v);
 
 // Model text goes into a comment, where it must stay text: no HTML (so no fake marker), no entity that decodes
-// to one, no @mention, link, image, autolinked URL, reference definition, or issue reference (`#12`, `owner/repo#12`).
+// to one, no @mention, link, image, autolinked URL, reference definition, issue reference (`#12`,
+// `owner/repo#12`, `GH-12`), or code fence, which left open would swallow the rest of the comment.
+// Redact before this, never after with anything that adds markdown.
 export function text(s) {
   return String(s ?? '').replace(/\r\n?/g, '\n')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/@/g, '@\u200b')
     .replace(/!\[/g, '[').replace(/\]\s*[([:]/g, (m) => `${m[0]}\u200b${m.slice(1)}`)
     .replace(/:\/\//g, ':\u200b//').replace(/\bwww\./gi, (m) => `${m.slice(0, 3)}\u200b.`)
-    .replace(/#(?=\d)/g, '#\u200b');
+    .replace(/#(?=\d)/g, '#\u200b').replace(/\bGH-(?=\d)/gi, (m) => `${m}\u200b`)
+    .replace(/`{3,}|~{3,}/g, (m) => `\\${m}`);
 }
 const cell = (s) => text(s).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|');
 // A path:line in a code span. Nothing but path characters, so it can't end the span or the line.
@@ -156,14 +174,17 @@ export const code = (s) => {
   return v ? `\`${v}\`` : '';
 };
 
-export function renderBody(result, { blocking, sha, runUrl, model }) {
-  const review = result?.structured_output;
+export function renderBody(result, { blocking, sha, runUrl, model, secrets = [] }) {
+  const review = redactAll(result?.structured_output, secrets);
   const tokens = Object.values(result?.modelUsage ?? {}).reduce(
     (t, u) => ({ in: t.in + (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0), out: t.out + (u.outputTokens ?? 0) }), { in: 0, out: 0 });
   const cost = result?.total_cost_usd != null ? ` · $${result.total_cost_usd.toFixed(2)}` : '';
   const footer = `<sub>Commit ${code(sha)} · ${model} · ${result?.num_turns ?? 0} turns · ${tokens.in} in / ${tokens.out} out tokens${cost} · [run](${runUrl}). Written by an AI with read-only access to the diff and the repository; it can be wrong.</sub>`;
   if (!review || !Array.isArray(review.findings)) {
-    const why = { error_max_turns: 'it ran out of turns', error_max_budget_usd: 'it reached its cost limit' }[result?.subtype] ?? 'it returned no review';
+    const why = {
+      error_max_turns: 'it ran out of turns', error_max_budget_usd: 'it reached its cost limit',
+      error_timeout: 'it ran out of time (timeout_minutes)', error_no_time: 'the job had no time left to run it (timeout_minutes)',
+    }[result?.subtype] ?? 'it returned no review';
     return { high: 0, body: `${MARKER}\n### AI review didn't finish\n\nNo review for this commit: ${why}. This never blocks a merge.\n\n${footer}` };
   }
   const order = { high: 0, medium: 1, low: 2 };
@@ -192,8 +213,10 @@ export function renderBody(result, { blocking, sha, runUrl, model }) {
 function render() {
   let result = null;
   try { result = JSON.parse(fs.readFileSync(out('claude.json'), 'utf8')); } catch { /* no output: rendered as unfinished */ }
-  const { body, high } = renderBody(result, { blocking: env.BLOCKING === 'true', sha: env.HEAD_SHA, runUrl: env.RUN_URL, model: env.MODEL });
-  setOutput('body', redact(body, [env.ANTHROPIC_API_KEY, env.LINEAR_API_KEY]));
+  const secrets = [env.ANTHROPIC_API_KEY, env.LINEAR_API_KEY];
+  const { body, high } = renderBody(result, { blocking: env.BLOCKING === 'true', sha: env.HEAD_SHA, runUrl: env.RUN_URL, model: env.MODEL, secrets });
+  // A last pass over the whole body; it only swaps a token for the placeholder, which adds no markdown.
+  setOutput('body', redact(body, secrets));
   setOutput('high', String(high));
   if (result) console.log(`turns ${result.num_turns}, cost $${result.total_cost_usd}, ${high} high`);
 }
