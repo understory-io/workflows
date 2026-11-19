@@ -16,6 +16,8 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 │   ├── lambda-deploy/ # Lambda function deployment
 │   └── test-report/   # Test results as job summary, check run and PR comment
 └── workflows/         # Reusable workflows
+dash0/
+└── tests/             # Dash0 "Tests" dashboard over test-report's and the E2E reporters' spans, applied by hand (README.md)
 ```
 
 ## GitHub Actions (Composite Actions)
