@@ -357,6 +357,12 @@ def publish_comment(api, pr, body, create):
         api("POST", f"issues/{pr}/comments", {"body": body})
 
 
+def head_moved(api, pr):
+    """Whether the PR has a newer commit than this run's. Runs of one PR can
+    finish out of order, and the older one must not overwrite the comment."""
+    return api("GET", f"pulls/{pr}")["head"]["sha"] != SHA
+
+
 def fence(text):
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
     return "`" * max(3, longest + 1)
@@ -460,7 +466,10 @@ def main():
             command_annotations(failed)
     if pr:
         try:
-            publish_comment(api, pr, body, create=not problem)
+            if head_moved(api, pr):
+                notes.append("The PR has a newer commit, so its run owns the PR comment and this one left it alone.")
+            else:
+                publish_comment(api, pr, body, create=not problem)
         except (urllib.error.URLError, OSError, ValueError, KeyError) as err:
             if denied(err):
                 notes.append("This job's token can't write PR comments (Dependabot, or the caller narrowed `permissions:`), so there is no PR comment.")
