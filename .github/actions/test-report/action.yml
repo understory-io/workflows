@@ -6,7 +6,8 @@ description: >-
   masks like the log; the check and the comment carry test names and lines.
   Reporting only: it never fails because a test failed, and without a token
   that can write checks or comments (Dependabot, or a caller that narrowed
-  `permissions:`) it writes the summary only.
+  `permissions:`) it writes the summary only. Given an OTLP endpoint and
+  headers, it also sends a span per test to Dash0.
 
 inputs:
   junit-path:
@@ -47,6 +48,19 @@ inputs:
     description: Token for the check run and the comment.
     required: false
     default: ${{ github.token }}
+  otlp-endpoint:
+    description: >-
+      Dash0 OTLP endpoint, HTTP (`https://ingress.<region>.aws.dash0.com`) or
+      gRPC (`ingress.<region>.aws.dash0.com:4317`, sent to the same host over
+      HTTP). Pass `secrets.DASH0_OTLP_ENDPOINT_GRPC`; empty sends nothing.
+    required: false
+    default: ""
+  otlp-headers:
+    description: >-
+      OTLP headers as `Authorization=Bearer …,Dash0-Dataset=…`. Pass
+      `secrets.DASH0_OTLP_HEADERS`; empty sends nothing.
+    required: false
+    default: ""
 
 outputs:
   tests:
@@ -95,6 +109,21 @@ runs:
         [ -n "$GO_TEST_LOG" ] && junit=$WORK_DIR/junit
         printf 'junit<<EOF_JUNIT\n%s\nEOF_JUNIT\n' "$junit" >> "$GITHUB_OUTPUT"
         python3 -I "$GITHUB_ACTION_PATH/report.py"
+
+    # One trace per report: a root span for the suite and a span per test. The
+    # step is bounded by `timeout` and never fails the job; without the inputs it
+    # only says so in the summary.
+    - name: Send the results to Dash0
+      if: ${{ !cancelled() && steps.report.outputs.results != '' }}
+      continue-on-error: true
+      shell: bash
+      env:
+        RESULTS: ${{ steps.report.outputs.results }}
+        OTLP_ENDPOINT: ${{ inputs.otlp-endpoint }}
+        OTLP_HEADERS: ${{ inputs.otlp-headers }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: timeout 60 python3 -I "$GITHUB_ACTION_PATH/otlp.py"
 
     - name: Upload the JUnit files
       if: ${{ !cancelled() && steps.report.outputs.files > 0 }}

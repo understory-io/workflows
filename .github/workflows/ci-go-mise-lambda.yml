@@ -70,6 +70,12 @@ on:
         required: false
       aws_region:
         required: false
+      # Optional: with both, the test report also sends each test to Dash0.
+      # Callers pass secrets.DASH0_OTLP_ENDPOINT_GRPC and secrets.DASH0_OTLP_HEADERS.
+      dash0_otlp_endpoint:
+        required: false
+      dash0_otlp_headers:
+        required: false
 
 # Tests and the Lambda binary run as two parallel jobs: the binary does not depend on
 # the tests, and callers' `needs:` on this workflow still waits for both.
@@ -208,6 +214,8 @@ jobs:
           go-module-dir: ${{ inputs.app_dir }}
           title: Go tests (${{ inputs.app_name }})
           artifact-name: go-test-results-${{ inputs.app_name }}
+          otlp-endpoint: ${{ secrets.dash0_otlp_endpoint }}
+          otlp-headers: ${{ secrets.dash0_otlp_headers }}
 
       # Saved on every run, PRs included, under a key per run: a PR's next push then
       # restores its own build rather than main's, which can be a day older and

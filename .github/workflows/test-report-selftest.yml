@@ -1,0 +1,33 @@
+name: "test-report self-test"
+
+# Runs report.py and otlp.py against a local OTLP server, so a change can't
+# quietly stop the Dash0 export or leak test output or the headers into it.
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/test-report/**"
+      - ".github/workflows/test-report-selftest.yml"
+      - "test/test_otlp.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/actions/test-report/**"
+      - ".github/workflows/test-report-selftest.yml"
+      - "test/test_otlp.py"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "Test"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run the tests
+        run: python3 -m unittest discover -s test -p 'test_otlp.py' -v

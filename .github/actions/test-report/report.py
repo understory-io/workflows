@@ -449,8 +449,18 @@ def main():
     if problem and tests:
         notes.append("These results are only here: they don't match the test step's outcome, so no check or PR comment has them.")
 
+    # For otlp.py: only results the check and the comment would carry too.
+    results = ""
+    if tests and not problem:
+        results = os.path.join(work_dir, "results.json")
+        with open(results, "w", encoding="utf-8") as f:
+            json.dump({"title": TITLE, "cases": [
+                {"package": c.package, "name": c.name, "secs": c.secs, "status": c.status, "file": c.file, "line": c.line}
+                for c in leaves
+            ]}, f)
+
     with open(env("GITHUB_OUTPUT", os.devnull), "a", encoding="utf-8") as out:
-        out.write(f"files={len(paths)}\ntests={tests}\nfailed={len(failed)}\nskipped={skipped}\n")
+        out.write(f"files={len(paths)}\ntests={tests}\nfailed={len(failed)}\nskipped={skipped}\nresults={results}\n")
 
     api = Api(env("TOKEN", ""))
     pr = env("PR", "")
