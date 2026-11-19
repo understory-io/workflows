@@ -120,6 +120,7 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 #### Testing & Quality
 
 - **`contracts-breaking`** - Fail a PR that breaks a Buf or OpenAPI contract, compared with its base ([how to call it](#contract-breaking-changes))
+- **`tests-passed`** - One check to require on every PR: waits for every other check on the PR head commit and passes only if they all passed (see below)
 - **`poeditor-check`** - Validate translations
 - **`crowdin-pull-translations`** - Pull Crowdin translations and open a PR
 
@@ -132,6 +133,46 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 #### Utilities
 
 - **`repo-data`** - Extract repository metadata
+
+### ✅ `tests-passed`: one required check for every PR
+
+Most service workflows are path-filtered, and a required check from a workflow that didn't run stays "Expected" forever. `tests-passed` runs on every PR instead and watches the head commit: every other check run and commit status (Vercel included). It passes when all of them succeeded, were neutral or skipped. It fails when any failed, was cancelled, timed out or needs action, or when a workflow couldn't start. The job summary lists every check and its result.
+
+Add this file to a repo as `.github/workflows/tests-passed.yml`. Keep it a workflow of its own: the gate leaves out every check of the workflow that calls it.
+
+```yaml
+name: tests-passed
+
+# No branches or paths filter: stacked PRs and PRs that touch no app need the gate too.
+on:
+  pull_request:
+
+concurrency:
+  group: tests-passed-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  checks: read
+  statuses: read
+
+jobs:
+  tests-passed:
+    uses: understory-io/workflows/.github/workflows/tests-passed.yml@main
+    # with:
+    #   ignore: |          # one name or regular expression per line
+    #     RM E2E smoke (dev)
+    #   timeout_minutes: 45
+```
+
+The check to require in the ruleset is **`tests-passed / tests-passed`** (GitHub Actions). Keep the caller's job id `tests-passed`, or the name changes.
+
+- The result is final once nothing has been running or appeared for `settle_seconds` (default 60), so a PR with nothing else to run passes in about a minute.
+- After `timeout_minutes` (default 45) it fails and names what is still running.
+- Only the newest run of each check counts, so a re-run that passes replaces the failure. The result is fixed once the gate finishes, though: after re-running a check, re-run `tests-passed` too, in either direction.
+- `ignore` lines also match as regular expressions against the whole name, so `.` matches any character; a bare job name such as `build` ignores it in every workflow. A deploy job that waits for an environment approval belongs here, or the gate times out.
+- A PR can edit its own copy of this file. When it becomes required, protect `.github/workflows/tests-passed.yml` with CODEOWNERS.
+- Dependabot's read-only token is enough; the gate only reads.
 
 ## Environment Conventions
 

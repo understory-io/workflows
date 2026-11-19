@@ -1,0 +1,261 @@
+name: tests-passed
+
+# One check a ruleset can require on every PR. Most service workflows are
+# path-filtered, and a required check from a workflow that never ran stays
+# "Expected" forever, so this gate runs on every PR and waits for whatever
+# else reports on the head commit instead: green when all of it passed, was
+# neutral or skipped; red when anything failed, was cancelled, timed out or
+# needs action.
+#
+# Call it from a workflow of its own (template in README.md). It leaves out
+# every check run of the workflow that calls it, so its own earlier runs,
+# cancelled by `concurrency`, don't count against it; any other job put in
+# that workflow would be left out too.
+#
+# Required check: `tests-passed / tests-passed` when the caller's job id is
+# `tests-passed`.
+
+on:
+  workflow_call:
+    inputs:
+      ignore:
+        description: >-
+          Checks to leave out, one per line. A line matches a check whose name
+          equals it or fully matches it as a regular expression; for a GitHub
+          Actions check it may also name the workflow, as "<workflow> / <check>".
+        type: string
+        required: false
+        default: ""
+      timeout_minutes:
+        description: "Minutes to wait for the other checks. The gate fails about 90 s before, listing what is still running"
+        type: number
+        required: false
+        default: 45
+      settle_seconds:
+        description: "Seconds nothing may be running or appear before the result is final, so checks that start late are seen"
+        type: number
+        required: false
+        default: 60
+      poll_seconds:
+        description: "Seconds between polls of the checks API"
+        type: number
+        required: false
+        default: 30
+      sha:
+        description: "Commit to check; defaults to the PR head commit"
+        type: string
+        required: false
+        default: ""
+      runner:
+        description: "Runner label"
+        type: string
+        required: false
+        default: ubuntu-24.04-arm
+
+permissions:
+  actions: read
+  checks: read
+  statuses: read
+
+jobs:
+  tests-passed:
+    name: tests-passed
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - name: Wait for every other check on the head commit
+        uses: actions/github-script@v9
+        env:
+          IGNORE: ${{ inputs.ignore }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          SETTLE_SECONDS: ${{ inputs.settle_seconds }}
+          POLL_SECONDS: ${{ inputs.poll_seconds }}
+          SHA: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+        with:
+          retries: 3
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = process.env.SHA;
+            const pollSeconds = Math.max(Number(process.env.POLL_SECONDS), 1);
+            const settleMs = Math.max(Number(process.env.SETTLE_SECONDS), 0) * 1000;
+            // The job itself is killed at timeout_minutes; stop early enough to say why.
+            const deadline = Date.now() + Math.max(Number(process.env.TIMEOUT_MINUTES) * 60 - 90, 30) * 1000;
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            const ignore = process.env.IGNORE.split('\n').map((s) => s.trim()).filter(Boolean).map((line) => {
+              let re = null;
+              try { re = new RegExp(`^(?:${line})$`); } catch { core.warning(`ignore: "${line}" is not a regular expression; matching it as a name only`); }
+              return (name) => name === line || (re !== null && re.test(name));
+            });
+            const ignored = (...names) => names.some((n) => ignore.some((match) => match(n)));
+
+            const PASS = new Set(['success', 'neutral', 'skipped']);
+
+            let self;
+            try {
+              self = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId })).data;
+            } catch (e) {
+              throw new Error(`cannot read this workflow run (${e.status} ${e.message}); the calling job needs "actions: read", "checks: read" and "statuses: read"`);
+            }
+
+            // One row per check, latest result only.
+            async function snapshot() {
+              const [runs, checkRuns, statuses] = await Promise.all([
+                github.paginate(github.rest.actions.listWorkflowRunsForRepo, { owner, repo, head_sha: sha, per_page: 100 }),
+                github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, filter: 'all', per_page: 100 }),
+                github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: sha, per_page: 100 }),
+              ]);
+              const runBySuite = new Map(runs.map((run) => [run.check_suite_id, run]));
+              const isSelf = (cr, run) => run?.workflow_id === self.workflow_id || cr.check_suite?.id === self.check_suite_id;
+
+              // A workflow can run more than once on a commit: on push and on
+              // pull_request, or again for another PR event. As in GitHub's own
+              // required checks, the newest check of a name counts, here per
+              // workflow and event, so a later run that skips a job doesn't hide
+              // an earlier failure of it.
+              const groups = new Map();
+              for (const cr of checkRuns) {
+                const run = runBySuite.get(cr.check_suite?.id);
+                if (isSelf(cr, run)) continue;
+                const key = run ? `wf:${run.workflow_id}:${run.event}:${cr.name}` : `app:${cr.app?.id}:${cr.name}`;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push({ cr, run });
+              }
+              const kept = [];
+              for (const members of groups.values()) {
+                const top = Math.max(...members.map((m) => m.run?.id ?? 0));
+                const latest = members.filter((m) => (m.run?.id ?? 0) === top);
+                // A re-run attempt adds a newer check run of the same name, which
+                // replaces the old one. In a first attempt, two jobs may share a
+                // name, and both count.
+                const rerun = (latest[0].run?.run_attempt ?? 2) > 1;
+                kept.push(...(rerun ? [latest.reduce((a, b) => (a.cr.id > b.cr.id ? a : b))] : latest));
+              }
+
+              const rows = [];
+              const runsWithChecks = new Set();
+              const runsWithFailures = new Set();
+              for (const { cr, run } of kept) {
+                const name = run ? `${run.name} / ${cr.name}` : cr.name;
+                const done = cr.status === 'completed';
+                const state = ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
+                if (run) runsWithChecks.add(run.id);
+                // An ignored failure explains its run's failure too.
+                if (run && done && !PASS.has(cr.conclusion)) runsWithFailures.add(run.id);
+                rows.push({ id: `check:${cr.id}`, name, result: done ? cr.conclusion : cr.status, state, url: cr.html_url });
+              }
+
+              // The newest run of each workflow and event also counts on its
+              // own. One with no jobs yet is still starting; one that ended with
+              // none never started (a broken workflow file); one that failed
+              // without a failed check still failed.
+              const newestRun = new Map();
+              for (const run of runs) {
+                if (run.workflow_id === self.workflow_id) continue;
+                const key = `${run.workflow_id}:${run.event}`;
+                if (!newestRun.has(key) || newestRun.get(key).id < run.id) newestRun.set(key, run);
+              }
+              for (const run of newestRun.values()) {
+                const done = run.status === 'completed';
+                if (done ? PASS.has(run.conclusion) || runsWithFailures.has(run.id) : runsWithChecks.has(run.id)) continue;
+                const name = `${run.name} (workflow)`;
+                rows.push({
+                  id: `run:${run.id}`,
+                  name,
+                  result: done ? run.conclusion : run.status,
+                  state: ignored(run.name, name) ? 'ignored' : done ? 'fail' : 'pending',
+                  url: run.html_url,
+                });
+              }
+
+              // Commit statuses (Vercel and other legacy integrations): newest per context.
+              const seen = new Set();
+              for (const st of statuses) {
+                if (seen.has(st.context)) continue;
+                seen.add(st.context);
+                rows.push({
+                  id: `status:${st.id}`,
+                  name: st.context,
+                  result: st.state,
+                  state: ignored(st.context) ? 'ignored' : st.state === 'pending' ? 'pending' : st.state === 'success' ? 'pass' : 'fail',
+                  url: st.target_url,
+                });
+              }
+              return rows;
+            }
+
+            const list = (rows) => rows.map((r) => `${r.name} (${r.result})`).join(', ');
+            let rows = [];
+            let quietSince = null;
+            let quietKey = null;
+            let errors = 0;
+            let timedOut = false;
+            for (;;) {
+              try {
+                rows = await snapshot();
+                errors = 0;
+              } catch (e) {
+                const limited = e.status === 429 || /rate limit/i.test(e.message ?? '');
+                if (!limited && [403, 404, 422].includes(e.status)) {
+                  throw new Error(`cannot read the checks of ${sha} (${e.status} ${e.message}); check the sha input, and that the calling job grants "actions: read", "checks: read" and "statuses: read"`);
+                }
+                // A failed poll proves nothing, so it never counts towards settling.
+                quietSince = null;
+                quietKey = null;
+                if (++errors >= 10 || Date.now() >= deadline) {
+                  throw new Error(`cannot read the checks of ${sha} after ${errors} tries in a row: ${e.status ?? ''} ${e.message}`);
+                }
+                core.warning(`poll failed (${e.status ?? ''} ${e.message}); retrying`);
+                await sleep(Math.min(pollSeconds * 1000, Math.max(deadline - Date.now(), 0)));
+                continue;
+              }
+              const pending = rows.filter((r) => r.state === 'pending');
+              if (pending.length === 0) {
+                const key = rows.map((r) => `${r.id}=${r.result}`).sort().join('|');
+                if (quietSince === null || key !== quietKey) {
+                  quietKey = key;
+                  quietSince = Date.now();
+                }
+                if (Date.now() - quietSince >= settleMs) break;
+                core.info(`nothing running; settling (${rows.length} checks)`);
+              } else {
+                quietSince = null;
+                quietKey = null;
+                core.info(`waiting for ${pending.length}: ${list(pending)}`);
+              }
+              if (Date.now() >= deadline) {
+                timedOut = pending.length > 0;
+                break;
+              }
+              await sleep(Math.min(pollSeconds * 1000, Math.max(deadline - Date.now(), 0)));
+            }
+
+            const order = { fail: 0, pending: 1, pass: 2, ignored: 3 };
+            rows.sort((a, b) => order[a.state] - order[b.state] || a.name.localeCompare(b.name));
+            const failed = rows.filter((r) => r.state === 'fail');
+            const pending = rows.filter((r) => r.state === 'pending');
+            const counted = rows.filter((r) => r.state !== 'ignored');
+
+            const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+            const icon = { fail: '❌', pending: '⏳', pass: '✅', ignored: '➖' };
+            await core.summary
+              .addHeading('tests-passed', 2)
+              .addRaw(`Commit <code>${esc(sha)}</code>: ${counted.length} checks, ${failed.length} not passed, ${pending.length} still running.`, true)
+              .addTable([
+                [{ data: 'Check', header: true }, { data: 'Result', header: true }],
+                ...rows.map((r) => [
+                  r.url ? `<a href="${esc(r.url)}">${esc(r.name)}</a>` : esc(r.name),
+                  `${icon[r.state]} ${esc(r.result)}${r.state === 'ignored' ? ' (ignored)' : ''}`,
+                ]),
+              ])
+              .write();
+
+            for (const r of failed) core.error(`${r.name}: ${r.result} ${r.url ?? ''}`.trim());
+            if (counted.length === 0) core.notice('no other check reported on this commit');
+            if (timedOut) {
+              core.setFailed(`timed out after ${process.env.TIMEOUT_MINUTES} min; still running: ${list(pending)}` + (failed.length ? `; not passed: ${list(failed)}` : ''));
+            } else if (failed.length) {
+              core.setFailed(`${failed.length} of ${counted.length} checks did not pass: ${list(failed)}`);
+            } else {
+              core.info(`all ${counted.length} checks passed`);
+            }
