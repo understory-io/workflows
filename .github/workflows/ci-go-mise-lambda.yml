@@ -84,6 +84,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # The test-report action at this workflow's own commit, so a caller gets the
+      # action that matches the workflow it pinned. Fetched before the private-module
+      # rewrite below, which would otherwise apply to this clone.
+      - name: Checkout the test-report action
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: .github/actions/test-report
+          persist-credentials: false
+
       # Started first so the download overlaps Go setup and the cache restore. ECR
       # Public mirrors Docker Hub's images without its anonymous pull limits; it is
       # tagged back to the requested name, which mise.toml's local:up runs.
@@ -167,13 +180,40 @@ jobs:
           cat /tmp/localstack-pull.log
           cd ${{ inputs.app_dir }} && mise local:up
 
+      # The output is also kept for the test report; pipefail keeps mise's exit code.
       - name: Run tests
-        run: cd ${{ inputs.app_dir }} && mise test
+        id: tests
+        run: |
+          set -o pipefail
+          cd ${{ inputs.app_dir }} && mise test 2>&1 | tee "$RUNNER_TEMP/go-test.log"
         env:
           GOFLAGS: "-mod=readonly"
           # The race detector otherwise sleeps a second before every test binary
           # exits, which is most of the run time of a service with many packages.
           GORACE: "atexit_sleep_ms=0"
+
+      # Reporting never decides the build: both steps continue on error, and they
+      # run after failed tests, which is when the report matters most.
+      - name: Convert test output to JUnit
+        id: junit
+        if: always() && steps.tests.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          [ -s "$RUNNER_TEMP/go-test.log" ] || exit 0
+          cd ${{ inputs.app_dir }}
+          GOFLAGS='' GOBIN="$RUNNER_TEMP/bin" go install github.com/jstemmer/go-junit-report/v2@v2.1.0
+          mkdir -p "$RUNNER_TEMP/test-results"
+          "$RUNNER_TEMP/bin/go-junit-report" -in "$RUNNER_TEMP/go-test.log" -out "$RUNNER_TEMP/test-results/go-test.xml"
+          echo "path=$RUNNER_TEMP/test-results/go-test.xml" >> "$GITHUB_OUTPUT"
+
+      - name: Report test results
+        if: always() && steps.junit.outputs.path != ''
+        continue-on-error: true
+        uses: ./.understory-workflows/.github/actions/test-report
+        with:
+          junit-path: ${{ steps.junit.outputs.path }}
+          title: Go tests (${{ inputs.app_name }})
+          artifact-name: test-results-${{ inputs.app_name }}
 
       # Saved on every run, PRs included, under a key per run: a PR's next push then
       # restores its own build rather than main's, which can be a day older and

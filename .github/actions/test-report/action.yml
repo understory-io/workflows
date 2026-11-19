@@ -1,0 +1,127 @@
+name: "Test report"
+description: >-
+  Report JUnit results as a job summary, a check run with annotations and one
+  PR comment per title that each run updates, and upload the JUnit files as an
+  artifact. Reporting only: it never fails because a test failed, and it skips
+  the check and the comment when the job's token can't write them (Dependabot,
+  or a caller that narrowed `permissions:`) instead of erroring.
+
+inputs:
+  junit-path:
+    description: JUnit XML file(s); newline-separated globs, `**` allowed.
+    required: true
+  title:
+    description: >-
+      Names the check run and identifies the PR comment, so it must be unique
+      among the reports on one PR, e.g. `Go tests (bookings-core)`.
+    required: true
+  artifact-name:
+    description: Artifact the JUnit files are uploaded as; unique within the workflow run.
+    required: false
+    default: test-results
+  token:
+    description: Token for the check run and the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  tests:
+    description: Number of test cases found.
+    value: ${{ steps.count.outputs.tests }}
+  failed:
+    description: Number of failed test cases.
+    value: ${{ steps.count.outputs.failed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Count the results
+      id: count
+      shell: bash
+      env:
+        PATTERNS: ${{ inputs.junit-path }}
+      run: |
+        dir=$(mktemp -d "$RUNNER_TEMP/test-report.XXXXXX")
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        python3 -I "$GITHUB_ACTION_PATH/report.py" "$PATTERNS" "$dir/slowest.md"
+
+    # The JUnit reporter turns a missing permission into an error annotation (check)
+    # or a failed step (comment), so ask first. Updating id 0 changes nothing: a token
+    # with the permission gets 404, one without gets 403 before the id is looked up.
+    - name: Check what the token may write
+      id: access
+      if: steps.count.outputs.tests > 0
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        allowed() {
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X PATCH \
+            -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+            -d '{}' "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/$1") || true
+          echo "PATCH $1 -> ${code:-none}" >&2
+          case "$code" in 404|422) echo true ;; *) echo false ;; esac
+        }
+        echo "checks=$(allowed check-runs/0)" >> "$GITHUB_OUTPUT"
+        if [ -n "$PR" ]; then
+          echo "comment=$(allowed issues/comments/0)" >> "$GITHUB_OUTPUT"
+        else
+          echo "comment=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Publish the report
+      if: steps.count.outputs.tests > 0
+      # v6.7.1
+      uses: mikepenz/action-junit-report@a16be3a69023e9bd7e748ede768b3282ea7b30ce
+      with:
+        token: ${{ inputs.token }}
+        report_paths: ${{ inputs.junit-path }}
+        check_name: ${{ inputs.title }}
+        annotate_only: ${{ steps.access.outputs.checks != 'true' }}
+        comment: ${{ steps.access.outputs.comment == 'true' }}
+        updateComment: "true"
+        job_summary: "true"
+        # Raw HTML: the reporter appends its table straight after this text.
+        job_summary_text: "<h3>${{ inputs.title }}</h3>"
+        detailed_summary: "true"
+        failed_summary_logs: "true"
+        include_passed: "false"
+        include_skipped: "false"
+        include_time_in_summary: "true"
+        fail_on_failure: "false"
+        fail_on_parse_error: "false"
+        require_tests: "false"
+
+    - name: Add the slowest tests to the summary
+      if: always()
+      shell: bash
+      env:
+        TITLE: ${{ inputs.title }}
+        PATTERNS: ${{ inputs.junit-path }}
+        TESTS: ${{ steps.count.outputs.tests }}
+        DIR: ${{ steps.count.outputs.dir }}
+        CHECKS: ${{ steps.access.outputs.checks }}
+        COMMENT: ${{ steps.access.outputs.comment }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        {
+          if [ "${TESTS:-0}" -eq 0 ]; then
+            printf '### %s\n\nNo test results found in `%s`.\n\n' "$TITLE" "$PATTERNS"
+          else
+            [ -s "$DIR/slowest.md" ] && cat "$DIR/slowest.md"
+            if [ "$CHECKS" != true ] || { [ -n "$PR" ] && [ "$COMMENT" != true ]; }; then
+              echo "> This job's token can't write checks or PR comments (Dependabot, or the caller narrowed \`permissions:\`), so the report is only here."
+              echo
+            fi
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the JUnit files
+      if: always() && steps.count.outputs.files > 0
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.junit-path }}
+        if-no-files-found: ignore
+        overwrite: true

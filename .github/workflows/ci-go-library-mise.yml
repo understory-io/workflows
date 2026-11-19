@@ -28,6 +28,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # See ci-go-mise-lambda.yml: the test-report action at this workflow's commit,
+      # fetched before the private-module rewrite.
+      - name: Checkout the test-report action
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: .github/actions/test-report
+          persist-credentials: false
+
       # Runner images ship an older baked-in Go than what mise.toml/go.mod
       # pin. mise resolves go:-backend tool versions (e.g. sprt) by shelling
       # out to `go list -m`, which enforces the current module's go.mod floor
@@ -92,10 +104,34 @@ jobs:
         if: ${{ inputs.localstack }}
         run: mise run local:up
 
+      # The output is also kept for the test report; pipefail keeps mise's exit code.
       - name: Run tests
-        run: mise run test
+        id: tests
+        run: |
+          set -o pipefail
+          mise run test 2>&1 | tee "$RUNNER_TEMP/go-test.log"
         env:
           GOFLAGS: "-mod=readonly"
+
+      # Reporting never decides the build; see ci-go-mise-lambda.yml.
+      - name: Convert test output to JUnit
+        id: junit
+        if: always() && steps.tests.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          [ -s "$RUNNER_TEMP/go-test.log" ] || exit 0
+          GOFLAGS='' GOBIN="$RUNNER_TEMP/bin" go install github.com/jstemmer/go-junit-report/v2@v2.1.0
+          mkdir -p "$RUNNER_TEMP/test-results"
+          "$RUNNER_TEMP/bin/go-junit-report" -in "$RUNNER_TEMP/go-test.log" -out "$RUNNER_TEMP/test-results/go-test.xml"
+          echo "path=$RUNNER_TEMP/test-results/go-test.xml" >> "$GITHUB_OUTPUT"
+
+      - name: Report test results
+        if: always() && steps.junit.outputs.path != ''
+        continue-on-error: true
+        uses: ./.understory-workflows/.github/actions/test-report
+        with:
+          junit-path: ${{ steps.junit.outputs.path }}
+          title: Go tests
 
       - name: Build module
         run: mise run build
