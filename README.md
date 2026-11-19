@@ -66,6 +66,41 @@ steps:
 
 - **`terraform`** - Plan on PRs with the result commented back, apply on push. With `semgrep: true` it also lints the PR diff against the shared rules in [`semgrep/terraform.yml`](semgrep/terraform.yml) plus the calling repo's `.semgrep.yml`, if any.
 
+### Contract breaking changes
+
+`contracts-breaking` fails a PR that breaks a contract other services consume. It publishes nothing and needs no secrets.
+
+- **Buf:** finds every `buf.yaml` / `buf.work.yaml` (skipping `generated`, `gen`, `vendor`, `node_modules`) and runs `buf breaking <module> --against .git#ref=<base commit>,subdir=<module>`, with each module's own `breaking:` rules. Only modules the PR touches are checked.
+- **OpenAPI:** runs `oasdiff breaking` for each spec in `openapi_specs`, failing on ERR-level changes.
+- **Summary:** every contract and its result goes in the job summary. A repo with no contracts, or a PR that touches none, passes.
+- **Intentional breaks:** a PR labelled `breaking-change-approved` gets its breaking changes as warnings. Use it only for a step of expand, migrate, contract. Labelling after the run needs a re-run of the job.
+
+Call it from a workflow of its own, on `pull_request` with no `branches` or `paths` filter, and keep the job named `contracts`:
+
+```yaml
+name: Contracts
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  contracts:
+    uses: understory-io/workflows/.github/workflows/contracts-breaking.yml@main
+    # All inputs are optional. Paths are relative to the repo root, one per line.
+    with:
+      # Proto roots without a buf.yaml, such as the directory a fungus event port ships:
+      buf_modules: |
+        apps/my-service/internal/events/proto
+      # Copies of another service's contract that this repo only consumes:
+      buf_exclude: |
+        apps/my-service/internal/client-copy
+      openapi_specs: |
+        openapi/my_spec.yml
+```
+
 ### 🔍 Shared Semgrep rules
 
 [`semgrep/terraform.yml`](semgrep/terraform.yml) holds Terraform lint rules every infrastructure repo gets through the `terraform` workflow. Fixtures sit beside it in `semgrep/terraform.tf`; add a `# ruleid:` and an `# ok:` case for every rule and run:
@@ -84,6 +119,7 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 
 #### Testing & Quality
 
+- **`contracts-breaking`** - Fail a PR that breaks a Buf or OpenAPI contract, compared with its base ([how to call it](#contract-breaking-changes))
 - **`poeditor-check`** - Validate translations
 - **`crowdin-pull-translations`** - Pull Crowdin translations and open a PR
 

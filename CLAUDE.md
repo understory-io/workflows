@@ -201,6 +201,15 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Rule tests**: `semgrep-rules.yml` (this repo's own CI, not `workflow_call`) runs `semgrep --test semgrep/` on PRs touching `semgrep/`, and fails if a rules file has no fixture beside it (`semgrep --test` alone passes that). Every rule needs `# ruleid:` and `# ok:` fixtures in `semgrep/terraform.tf`.
 - **Blast radius**: `@main` is what every caller pins, so a change here reaches all semgrep-enabled repos on their next PR.
 
+#### 16. contracts-breaking (`contracts-breaking.yml`)
+
+- **Purpose**: Fail a PR that breaks a Buf module (`buf breaking`) or, optionally, an OpenAPI spec (`oasdiff breaking`) compared with the PR's base commit. Publishes nothing, needs no secrets (not the fungus registry either)
+- **Trigger**: `workflow_call`, from a caller on `pull_request` with no branch or path filter. The caller job is named `contracts`
+- **Inputs** (all optional): `buf_modules` (proto roots without a buf.yaml, e.g. a fungus event port's `sdk/proto`), `buf_exclude` (consumed copies of another service's contract), `openapi_specs`, `approval_label` (default `breaking-change-approved`), `timeout_minutes`
+- **How**: discovers modules from `git ls-tree` at the head and the base (a deleted module counts as breaking), skips untouched ones, and diffs against the base commit `github.event.pull_request.base.sha` in the default merge checkout, so a base that moved on after the branch point causes no false breaks. buf is `bufbuild/buf-setup-action` pinned by SHA and `BUF_VERSION`; oasdiff is the release tarball pinned by version and sha256 (`OASDIFF_VERSION`, `OASDIFF_SHA256`)
+- **Label**: read live from the API, so a re-run honours a label added after the run; falls back to the event payload. Breaking changes become warnings; a failure to run (build error, unreadable spec) always fails
+- **Not a publisher**: do not add `fungus publish` here. fungus's own `contracts.yml` publishes unstable versions to the production registry per PR
+
 ## Usage Patterns
 
 ### Calling a Reusable Workflow
