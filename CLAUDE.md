@@ -153,6 +153,15 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: Pull translations from Crowdin and open a PR
 - **Trigger**: `workflow_call`
 
+#### 9b. tests-passed (`tests-passed.yml`)
+
+- **Purpose**: one check (`tests-passed / tests-passed`) a ruleset can require on every PR, since path-filtered workflows leave their own required checks pending forever. Caller template in README.md: `on: pull_request` with no filters, `concurrency` per PR, `actions: read`, `checks: read`, `statuses: read`.
+- **Trigger**: `workflow_call`
+- **Inputs**: `ignore` (newline list; a line matches a check whose name equals it or fully matches it as a regex, or `<workflow name> / <check name>`), `timeout_minutes` (45), `settle_seconds` (60), `poll_seconds` (30), `sha` (default PR head), `runner` (`ubuntu-24.04-arm`)
+- **How it decides**: one `actions/github-script` step polls workflow runs, check runs (`filter: all`) and commit statuses for the head SHA. It drops every run of its own workflow (the caller file must hold only the gate). Like GitHub's required checks, the newest check run of a name counts, per workflow and event, so a later run that skips a job doesn't hide an earlier failure; within a run, same-named check runs collapse only on a re-run attempt (`run_attempt > 1`). Statuses: newest per context. success/neutral/skipped pass; anything else completed fails. The newest run per workflow and event also counts: pending while it has no jobs, failed if it ended badly without a failed check (`startup_failure` leaves no check run). A failed poll resets the settle timer; 403 (not rate limit), 404 and 422 fail at once, 10 failed polls in a row fail. The result is final after `settle_seconds` with nothing running and nothing new.
+- **Timeout**: the job's `timeout-minutes` is `timeout_minutes`; the script stops 90 s earlier to fail with the list of what is still running (no arithmetic in expressions).
+- **Test**: `tests-passed-selftest.yml` runs `test/tests-passed.mjs`, which cuts the script out of the YAML (by its 12-space indent) and runs it against a mocked API and a fake clock (27 scenarios; add one per behaviour change). Keep the script at that indent.
+
 ### Release Management Workflows
 
 #### 10. create-deployment-prs (`create-deployment-prs.yml`)
