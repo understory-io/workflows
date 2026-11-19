@@ -7,7 +7,8 @@ Its data is one span per test:
 |---|---|---|
 | test-report action, unit and acceptance tests in PR and main CI | `<repo>-tests` | the report's title, e.g. `Go tests (bookings-core)` |
 | storefront Playwright reporter, `E2E (dev)` | `storefront-e2e` | `E2E (dev)` |
-| backoffice Playwright reporter, `RM E2E (dev)` | `rm-e2e`, `rm-e2e-smoke` | the workflow name |
+| backoffice Playwright reporter, `RM E2E (dev)` nightly | `rm-e2e` | `RM E2E (dev)` |
+| backoffice Playwright reporter, smoke runs for a backend PR | `rm-e2e-smoke` | `RM E2E smoke (dev)`; `e2e.source.*` names the PR |
 
 All of them use `service.namespace` `understory` and the same keys: `test.outcome`
 (`expected`, `unexpected`, `flaky`, `skipped`), `test.full_name`, `github.branch`,
@@ -39,3 +40,7 @@ reverts the edit.
 - A test span is one with `test.name`; the test report's root span has none.
 - "Passed and failed on the same commit" is how unit tests show as flaky, as they
   don't retry. It needs two runs of one commit, such as a re-run of a failed job.
+  It keeps to unit tests (`test_package!=""`): an E2E run tests whatever dev serves,
+  so its commit doesn't pin the code under test.
+- Spans from before the E2E reporters sent `test.suite` and `github.*` show as a
+  suite with no name until they leave the window (14 days from 2026-11-19).

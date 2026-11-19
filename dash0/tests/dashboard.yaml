@@ -78,10 +78,7 @@ spec:
           spec:
             calculation: last-number
             dash0Extensions: {displayMode: horizontal-bar}
-            format: {unit: '%', decimalPlaces: 1}
-            thresholds:
-              steps:
-                - {color: var(--decorative-warn-bg), name: __DASH0_DEGRADED, value: 99}
+            format: {unit: percent-decimal, decimalPlaces: 1}
         queries:
           - kind: TimeSeriesQuery
             spec:
@@ -89,12 +86,12 @@ spec:
                 kind: PrometheusTimeSeriesQuery
                 spec:
                   query: >-
-                    100 * (1 - (sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
+                    1 - (sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
                     service_namespace="understory", test_outcome="unexpected", $service, $suite, $branch}[$window]))
                     or 0 * sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
                     service_namespace="understory", test_outcome!="skipped", test_name!="", $service, $suite, $branch}[$window])))
                     / sum by (service_name, test_suite) (increase({otel_metric_name="dash0.spans",
-                    service_namespace="understory", test_outcome!="skipped", test_name!="", $service, $suite, $branch}[$window])))
+                    service_namespace="understory", test_outcome!="skipped", test_name!="", $service, $suite, $branch}[$window]))
                   seriesNameFormat: '{{ service_name }} · {{ test_suite }}'
     failures:
       kind: Panel
@@ -187,10 +184,11 @@ spec:
       spec:
         display:
           name: 'Flaky tests: passed and failed on the same commit'
-          description: Commits on which a test both passed and failed, in different runs
-            or attempts of the same code. Covers unit tests, which don't retry. A test
-            that fails on every run of a commit is broken, not flaky, and shows under
-            Most failing tests instead.
+          description: Unit tests only (they don't retry), counting the commits on which
+            a test both passed and failed, as a re-run does. E2E suites test whatever dev
+            serves, so their commit doesn't pin the code under test; their flaky tests are
+            in the retry panel. A test that fails on every run of a commit is broken, not
+            flaky, and shows under Most failing tests.
         plugin:
           kind: GaugeChart
           spec:
@@ -206,10 +204,10 @@ spec:
                   query: >-
                     topk(15, count by (service_name, test_full_name) (
                     (sum by (service_name, test_full_name, github_sha) (increase({otel_metric_name="dash0.spans",
-                    service_namespace="understory", test_outcome="unexpected", $service, $suite, $branch}[$window])) > 0)
+                    service_namespace="understory", test_package!="", test_outcome="unexpected", $service, $suite, $branch}[$window])) > 0)
                     and on (service_name, test_full_name, github_sha)
                     (sum by (service_name, test_full_name, github_sha) (increase({otel_metric_name="dash0.spans",
-                    service_namespace="understory", test_outcome="expected", $service, $suite, $branch}[$window])) > 0)))
+                    service_namespace="understory", test_package!="", test_outcome="expected", $service, $suite, $branch}[$window])) > 0)))
                   seriesNameFormat: '{{ service_name }} · {{ test_full_name }}'
     testsRun:
       kind: Panel
