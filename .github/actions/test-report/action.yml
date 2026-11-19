@@ -101,6 +101,8 @@ runs:
         include_passed: "false"
         include_skipped: "false"
         include_time_in_summary: "true"
+        # Otherwise a green run gets an empty table saying "No test annotations available".
+        verbose_summary: "false"
         fail_on_failure: "false"
         fail_on_parse_error: "false"
         require_tests: "false"
