@@ -99,6 +99,8 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 **Comment states**: the comment shows the head commit and the test step's outcome. A run with a report creates or updates it. A run without one (tests never ran, output not readable, results that contradict `test-outcome`) only updates an existing comment, to say so for that commit, so a green comment never outlives a red head. Results that contradict `test-outcome` stay in the summary.
 
+**JUnit from other runners** (vitest, `junit-path`): a failure is annotated and linked at its line when the class names a test file that exists and the failure prints it as `file:line:column`. The class is read relative to a directory above the JUnit file (the project root in a monorepo, so keep the file under the project) and then to the repository root. Failures without such a line are listed without a location. Used by storefront and backoffice.
+
 **Counting**: Go subtests count, their parents don't, unless the parent failed on its own. Output that go-junit-report can't attribute (gotestsum's own formats leave the package empty) gives no report rather than wrong numbers. Without `go test -v` only failed tests are listed, and the summary says so.
 
 **Never fails the build**: it ignores test failures. A 403 on the check or the comment (Dependabot, or a caller that narrowed `permissions:`) becomes a note in the summary, and the failures are annotated through log commands instead (masked, at most 10). Callers still put `continue-on-error: true` on the step.
