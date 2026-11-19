@@ -15,6 +15,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 │   ├── image-exists/  # Fail unless an image reference resolves
 │   ├── lambda-deploy/ # Lambda function deployment
 │   └── test-report/   # Test results as job summary, check run and PR comment
+├── ai-review/         # Script, prompt and schema of ai-review.yml
 └── workflows/         # Reusable workflows
 ```
 
@@ -239,6 +240,17 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **How**: discovers modules from `git ls-tree` at the head and the base (a deleted module counts as breaking), skips untouched ones, and diffs against the base commit `github.event.pull_request.base.sha` in the default merge checkout, so a base that moved on after the branch point causes no false breaks. buf is `bufbuild/buf-setup-action` pinned by SHA and `BUF_VERSION`; oasdiff is the release tarball pinned by version and sha256 (`OASDIFF_VERSION`, `OASDIFF_SHA256`)
 - **Label**: read live from the API, so a re-run honours a label added after the run; falls back to the event payload. Breaking changes become warnings; a failure to run (build error, unreadable spec) always fails
 - **Not a publisher**: do not add `fungus publish` here. fungus's own `contracts.yml` publishes unstable versions to the production registry per PR
+
+#### 17. ai-review (`ai-review.yml`)
+
+- **Purpose**: an adversarial AI review of each PR as a check plus one PR comment (`<!-- understory-ai-review -->`, updated in place, only the github-actions bot's own comment). Fixed questions: invariants, existing data, blast radius, proving tests; findings carry high/medium/low. Caller template in README.md
+- **Trigger**: `workflow_call` from `on: pull_request` (never `pull_request_target`: the PR is untrusted input)
+- **Inputs**: `blocking` (false), `model` (`claude-opus-5-5`), `effort` (high), `max_diff_kb` (250), `max_turns` (40), `max_budget_usd` (3), `timeout_minutes` (20). Secrets: `anthropic_api_key`, `linear_api_key` (both optional)
+- **Code**: `.github/ai-review/` — `review.mjs` (subcommands `linear`, `prepare`, `run`, `render`), `prompt.md` (appended system prompt with the questions and severity rubric), `schema.json` (`--json-schema` structured output). Checked out from `job.workflow_repository@job.workflow_sha` like test-report
+- **Jobs**: `review` (contents: read, the key) gates, checks out the merge commit (`HEAD^1..HEAD` is the PR), fetches the Linear issue, builds the prompt, runs Claude Code `2.1.318` with `--restricted --safe-mode --tools Read,Grep,Glob --permission-prompts none` and an env of PATH/HOME/USER/LANG/TMPDIR/key only, then renders and redacts. `report` (pull-requests: write, no key, no PR checkout) posts the comment if the head hasn't moved, then the Verdict step
+- **Never red in advisory mode**: every step that can fail has `continue-on-error: true`; only Verdict exits 1, and only when `blocking` and `high > 0`. Skips (no key, draft, bot, too big) are `::notice`s. Keep it that way: `tests-passed` counts any failed check
+- **Untrusted text**: PR text, the issue and the diff go in a per-run random `untrusted-<hex>` tag; the comment escapes `<`/`>` and `@`, and redacts the keys and token-shaped strings. Don't print PR file names or text to the log (workflow commands)
+- **Test**: `ai-review-selftest.yml` runs `test/ai-review.mjs` (diff building, prompt, Claude Code flags and env via a fake binary, rendering, redaction, and the workflow's pins and `continue-on-error` rules)
 
 ## Usage Patterns
 

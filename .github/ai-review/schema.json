@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "invariants", "existing_data", "blast_radius", "proving_tests", "findings"],
+  "properties": {
+    "summary": { "type": "string", "description": "What the change does and your overall risk call, in at most two sentences" },
+    "invariants": { "type": "string" },
+    "existing_data": { "type": "string" },
+    "blast_radius": { "type": "string" },
+    "proving_tests": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "title", "location", "question", "detail"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "title": { "type": "string", "description": "One line" },
+          "location": { "type": "string", "description": "path:line of the strongest evidence" },
+          "question": { "type": "string", "enum": ["invariants", "existing_data", "blast_radius", "proving_tests", "other"] },
+          "detail": { "type": "string", "description": "The evidence and the failure scenario" }
+        }
+      }
+    }
+  }
+}

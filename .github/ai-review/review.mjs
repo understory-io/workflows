@@ -1,0 +1,166 @@
+// AI review of a pull request, for ai-review.yml. Subcommands, each reading env and files under OUT_DIR:
+//   linear   fetch the Linear issue named in the branch or title (LINEAR_API_KEY) into linear.md
+//   prepare  build prompt.md from the PR and its diff; sets `skip` when there is nothing to review or too much
+//   run      run Claude Code read-only on prompt.md into claude.json
+//   render   turn claude.json into the PR comment (`body`) and the number of high findings (`high`)
+// A local calibration run calls the same subcommands, so it reviews with exactly what CI sends.
+import { execFileSync, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const env = process.env;
+const here = path.dirname(fileURLToPath(import.meta.url));
+const out = (name) => path.join(env.OUT_DIR, name);
+export const MARKER = '<!-- understory-ai-review -->';
+
+function setOutput(name, value) {
+  if (!env.GITHUB_OUTPUT) return console.log(`${name}=${value}`);
+  const delim = `EOF_${crypto.randomBytes(8).toString('hex')}`;
+  fs.appendFileSync(env.GITHUB_OUTPUT, `${name}<<${delim}\n${value}\n${delim}\n`);
+}
+
+export function issueKeys(...texts) {
+  const keys = new Set();
+  for (const t of texts) {
+    for (const m of String(t ?? '').matchAll(/(?:^|[^A-Za-z0-9])([A-Za-z]{2,6})-(\d{1,6})(?!\d)/g)) keys.add(`${m[1].toUpperCase()}-${m[2]}`);
+  }
+  return [...keys].slice(0, 2);
+}
+
+async function linear() {
+  const found = [];
+  for (const key of issueKeys(env.HEAD_REF, env.PR_TITLE)) {
+    const res = await fetch('https://api.linear.app/graphql', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: env.LINEAR_API_KEY },
+      body: JSON.stringify({ query: 'query($id:String!){issue(id:$id){identifier title description}}', variables: { id: key } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const issue = (await res.json().catch(() => null))?.data?.issue;
+    if (issue) found.push(`### ${issue.identifier}: ${issue.title}\n\n${(issue.description ?? '').slice(0, 20_000)}`);
+  }
+  fs.writeFileSync(out('linear.md'), found.join('\n\n'));
+  console.log(`linked Linear issues read: ${found.length}`);
+}
+
+// Lock files and files marked linguist-generated are listed with their line counts but left out of the diff.
+const EXCLUDE = [
+  ':(exclude,attr:linguist-generated=true)',
+  ...['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'go.sum', 'Cargo.lock', 'uv.lock', '*.snap'].map((g) => `:(exclude,glob)**/${g}`),
+];
+
+export function buildPrompt({ repository, baseRef, title, body, issues, files, diff }) {
+  // A tag the PR author can't guess, so their text can't close it and pose as ours.
+  const tag = `untrusted-${crypto.randomBytes(6).toString('hex')}`;
+  const block = (name, text) => `<${tag} name="${name}">\n${text}\n</${tag}>`;
+  return [
+    `Review this pull request in ${repository}. Your working directory is the PR merged into its base branch \`${baseRef}\`.`,
+    'Title and description, written by the PR author:',
+    block('pr', `# ${title}\n\n${String(body ?? '').slice(0, 20_000)}`),
+    ...(issues ? ['The linked Linear issue, written by the team:', block('issue', issues)] : []),
+    'Changed files, as +added -removed lines. Deleted, lock and generated files are left out of the diff below:',
+    block('files', files),
+    'The diff:',
+    block('diff', diff),
+    'Answer the four questions and list your findings, following your instructions.',
+  ].join('\n\n');
+}
+
+function prepare() {
+  const git = (...args) => execFileSync('git', ['-C', env.REPO_DIR, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 1 << 30 });
+  // --no-ext-diff/--no-textconv: never run a diff driver that the PR's .gitattributes names.
+  const range = ['--no-color', '--no-ext-diff', '--no-textconv', '-M', env.BASE || 'HEAD^1', 'HEAD'];
+  const deleted = new Set(git('diff', '--name-only', '--diff-filter=D', ...range).split('\n').filter(Boolean));
+  const stats = git('diff', '--numstat', ...range).split('\n').filter(Boolean)
+    .map((l) => { const [a, r, f] = l.split('\t'); return `+${a} -${r} ${f}${deleted.has(f) ? ' (deleted)' : ''}`; });
+  const diff = git('diff', '--diff-filter=d', ...range, '--', '.', ...EXCLUDE);
+  const kb = Math.ceil(Buffer.byteLength(diff) / 1024);
+  const max = Number(env.MAX_DIFF_KB);
+  console.log(`${stats.length} files changed, ${deleted.size} deleted, ${kb} KB of diff to review`);
+  if (stats.length === 0) return setOutput('skip', 'the PR changes no files');
+  if (kb > max) return setOutput('skip', `the diff is ${kb} KB, over the ${max} KB limit (deleted, lock and generated files don't count). Split the PR, or raise max_diff_kb`);
+  const issues = fs.existsSync(out('linear.md')) ? fs.readFileSync(out('linear.md'), 'utf8').trim() : '';
+  const files = stats.length > 500 ? [...stats.slice(0, 500), `… and ${stats.length - 500} more`].join('\n') : stats.join('\n');
+  fs.writeFileSync(out('prompt.md'), buildPrompt({ repository: env.REPOSITORY, baseRef: env.BASE_REF, title: env.PR_TITLE, body: env.PR_BODY, issues, files, diff }));
+  setOutput('skip', '');
+}
+
+function run() {
+  const args = [
+    '-p', '--output-format', 'json', '--no-session-persistence',
+    // Only the file-reading tools, confined to the checkout (symlinks out of it are refused too);
+    // no shell, web, MCP, settings, hooks or CLAUDE.md from the PR.
+    '--restricted', '--safe-mode', '--strict-mcp-config', '--tools', 'Read,Grep,Glob', '--permission-prompts', 'none',
+    '--model', env.MODEL, '--effort', env.EFFORT, '--max-turns', env.MAX_TURNS, '--max-budget-usd', env.MAX_BUDGET_USD,
+    '--append-system-prompt-file', path.join(here, 'prompt.md'),
+    '--json-schema', fs.readFileSync(path.join(here, 'schema.json'), 'utf8'),
+  ];
+  // Only what Claude Code needs; nothing else from the runner's environment reaches it.
+  const childEnv = Object.fromEntries(['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'ANTHROPIC_API_KEY'].filter((k) => env[k]).map((k) => [k, env[k]]));
+  const r = spawnSync(env.CLAUDE_BIN || 'claude', args, {
+    cwd: env.REPO_DIR, env: { ...childEnv, DISABLE_AUTOUPDATER: '1' }, encoding: 'utf8', maxBuffer: 64 << 20,
+    stdio: [fs.openSync(out('prompt.md'), 'r'), 'pipe', 'pipe'], timeout: Number(env.RUN_TIMEOUT_MS || 20 * 60_000),
+  });
+  fs.writeFileSync(out('claude.json'), r.stdout ?? '');
+  if (r.status !== 0) console.log(`claude exited with ${r.status ?? r.signal}: ${redact(r.stderr ?? '', [env.ANTHROPIC_API_KEY]).slice(-2000)}`);
+}
+
+export function redact(text, secrets = []) {
+  for (const s of secrets) if (s && s.length >= 8) text = text.split(s).join('[redacted]');
+  return text.replace(/(sk-ant-|lin_api_|github_pat_|gh[pousr]_)[A-Za-z0-9_-]{8,}/g, '[redacted]');
+}
+
+// Model text goes into a comment: no HTML (and so no fake marker), no @mentions, one line per table cell.
+const text = (s) => String(s ?? '').replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;')).replace(/@(?=[\w-])/g, '@​');
+const cell = (s) => text(s).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|');
+const code = (s) => (s ? `\`${String(s).replace(/[`\n]/g, '')}\`` : '');
+
+export function renderBody(result, { blocking, sha, runUrl, model }) {
+  const review = result?.structured_output;
+  const tokens = Object.values(result?.modelUsage ?? {}).reduce(
+    (t, u) => ({ in: t.in + (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0), out: t.out + (u.outputTokens ?? 0) }), { in: 0, out: 0 });
+  const cost = result?.total_cost_usd != null ? ` · $${result.total_cost_usd.toFixed(2)}` : '';
+  const footer = `<sub>Commit ${code(sha)} · ${model} · ${result?.num_turns ?? 0} turns · ${tokens.in} in / ${tokens.out} out tokens${cost} · [run](${runUrl}). Written by an AI with read-only access to the diff and the repository; it can be wrong.</sub>`;
+  if (!review || !Array.isArray(review.findings)) {
+    const why = { error_max_turns: 'it ran out of turns', error_max_budget_usd: 'it reached its cost limit' }[result?.subtype] ?? 'it returned no review';
+    return { high: 0, body: `${MARKER}\n### AI review didn't finish\n\nNo review for this commit: ${why}. This never blocks a merge.\n\n${footer}` };
+  }
+  const order = { high: 0, medium: 1, low: 2 };
+  const findings = review.findings.filter((f) => f.severity in order).sort((a, b) => order[a.severity] - order[b.severity]);
+  const count = (s) => findings.filter((f) => f.severity === s).length;
+  const icon = { high: '🔴', medium: '🟠', low: '⚪' };
+  const lines = [
+    MARKER,
+    `## AI review: ${count('high')} high · ${count('medium')} medium · ${count('low')} low`,
+    text(review.summary),
+    blocking ? '> A high finding fails this check.' : '> Advisory: this check never blocks a merge.',
+  ];
+  if (findings.length) {
+    lines.push('| Severity | Finding | Where |\n|---|---|---|', ...findings.map((f) => `| ${icon[f.severity]} ${f.severity} | ${cell(f.title)} | ${code(f.location)} |`));
+    lines.push(`<details><summary>Evidence</summary>\n\n${findings.map((f) => `**${cell(f.title)}** ${code(f.location)}\n\n${text(f.detail)}`).join('\n\n')}\n\n</details>`);
+  }
+  lines.push('### The four questions', ...[
+    ['Which invariant changes', review.invariants], ['Which existing data it meets', review.existing_data],
+    ['Blast radius', review.blast_radius], ['Which test proves it', review.proving_tests],
+  ].map(([q, a]) => `**${q}:** ${text(a)}`), footer);
+  let body = lines.join('\n\n');
+  if (body.length > 60_000) body = `${body.slice(0, 59_000)}\n\n… cut to fit a comment.\n\n${footer}`;
+  return { high: count('high'), body };
+}
+
+function render() {
+  let result = null;
+  try { result = JSON.parse(fs.readFileSync(out('claude.json'), 'utf8')); } catch { /* no output: rendered as unfinished */ }
+  const { body, high } = renderBody(result, { blocking: env.BLOCKING === 'true', sha: env.HEAD_SHA, runUrl: env.RUN_URL, model: env.MODEL });
+  setOutput('body', redact(body, [env.ANTHROPIC_API_KEY, env.LINEAR_API_KEY]));
+  setOutput('high', String(high));
+  if (result) console.log(`turns ${result.num_turns}, cost $${result.total_cost_usd}, ${high} high`);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const cmd = { linear, prepare, run, render }[process.argv[2]];
+  if (!cmd) throw new Error('usage: review.mjs linear|prepare|run|render');
+  await cmd();
+}
