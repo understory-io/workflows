@@ -1,0 +1,322 @@
+name: Contracts breaking-change check
+
+# Blocks a PR that breaks a contract other services consume: Buf modules (`buf breaking`) and, optionally,
+# OpenAPI specs (`oasdiff breaking`), each compared with the PR's base. It publishes nothing and needs no secrets.
+#
+# Call it from `on: pull_request` with no branch or path filter, so the check also runs on PRs that touch no contract
+# and a required check never hangs. See the README for the caller template.
+
+on:
+  workflow_call:
+    inputs:
+      buf_modules:
+        description: >-
+          Extra Buf modules to check, one directory per line, relative to the repo root. Use it for a proto root that
+          has no buf.yaml, such as the directory a fungus event port ships. Modules with a buf.yaml or buf.work.yaml
+          are found without it.
+        type: string
+        default: ""
+      buf_exclude:
+        description: >-
+          Directories to leave out, one per line (a directory and everything below it). Use it for copies of another
+          service's contract that this repo only consumes.
+        type: string
+        default: ""
+      openapi_specs:
+        description: OpenAPI specs to check with oasdiff, one path per line, relative to the repo root.
+        type: string
+        default: ""
+      approval_label:
+        description: A PR with this label gets its breaking changes reported as warnings instead of failing the check.
+        type: string
+        default: breaking-change-approved
+      timeout_minutes:
+        description: Timeout of the job, in minutes.
+        type: number
+        default: 10
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: Breaking changes
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      BUF_VERSION: 1.75.0
+      OASDIFF_VERSION: 1.39.0
+      # sha256 of oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz from the release's checksums.txt
+      OASDIFF_SHA256: 71a85930728f367a2086077b7ae1411319421549d18473a3e8258b6451520433
+    steps:
+      # The default checkout is the PR merged into its base, so a diff against the base's commit shows only what this
+      # PR adds, even when the base moved on after the PR branched.
+      - name: Check out with full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Find the contracts this PR touches
+        id: discover
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BUF_MODULES: ${{ inputs.buf_modules }}
+          BUF_EXCLUDE: ${{ inputs.buf_exclude }}
+        run: |
+          # No -e: GitHub's bash runs with it, and the exit codes of buf and oasdiff are handled below.
+          set +e
+          set -uo pipefail
+          if [ -z "$BASE_SHA" ]; then
+            echo "::error::No base commit to compare with. Call this workflow from a pull_request or merge_group trigger."
+            exit 1
+          fi
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$BASE_SHA"
+          if ! git rev-parse --verify --quiet "${BASE_SHA}^{commit}" > /dev/null; then
+            echo "::error::The base commit ${BASE_SHA} is not available in the checkout."
+            exit 1
+          fi
+          # The payload's base can be older than the base the merge commit was made on. Prefer the merge commit's first
+          # parent when it descends from the payload's base, so a change that landed on the base meanwhile is not blamed
+          # on this PR.
+          if git rev-parse --verify --quiet HEAD^2 > /dev/null \
+            && git merge-base --is-ancestor "$BASE_SHA" HEAD^1; then
+            BASE_SHA="$(git rev-parse HEAD^1)"
+          fi
+
+          work="$RUNNER_TEMP/contracts"
+          mkdir -p "$work"
+          : > "$work/buf-modules.tsv"
+
+          norm() { local p="${1#./}"; p="${p%/}"; printf '%s' "${p:-.}"; }
+          has_protos() { git -c core.quotepath=false ls-tree -r --name-only "$1" -- "$2" | grep '\.proto$' > /dev/null; }
+          is_excluded() {
+            local e
+            while IFS= read -r e; do
+              [ -n "$e" ] || continue
+              e="$(norm "$e")"
+              if [ "$e" = . ] || [ "$1" = "$e" ] || [[ "$1" == "$e"/* ]]; then return 0; fi
+            done <<< "$BUF_EXCLUDE"
+            return 1
+          }
+
+          # Modules at the base as well as at the head, so deleting a whole module shows up.
+          list_configs() {
+            git -c core.quotepath=false ls-tree -r --name-only "$1" |
+              grep -E '(^|/)buf(\.work)?\.yaml$' |
+              grep -Ev '(^|/)(generated|gen|node_modules|vendor|dist|target)/' || true
+          }
+          candidates=""
+          workspaces=""
+          for rev in HEAD "$BASE_SHA"; do
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              d="$(dirname "$f")"
+              candidates+="$d"$'\n'
+              case "$f" in */buf.work.yaml | buf.work.yaml) workspaces+="$d"$'\n' ;; esac
+            done < <(list_configs "$rev")
+          done
+          while IFS= read -r d; do
+            [ -n "$d" ] && candidates+="$(norm "$d")"$'\n'
+          done <<< "$BUF_MODULES"
+
+          run_buf=false
+          while IFS= read -r dir; do
+            [ -n "$dir" ] || continue
+            # A module inside a workspace is checked through the workspace.
+            inside=false
+            while IFS= read -r w; do
+              [ -n "$w" ] || continue
+              if [ "$dir" != "$w" ] && { [ "$w" = . ] || [[ "$dir" == "$w"/* ]]; }; then inside=true; fi
+            done <<< "$workspaces"
+            $inside && continue
+            is_excluded "$dir" && continue
+
+            cfg=""
+            in_head=false; in_base=false
+            has_protos HEAD "$dir" && in_head=true
+            has_protos "$BASE_SHA" "$dir" && in_base=true
+            if $in_head && $in_base; then
+              if git diff --quiet "$BASE_SHA" HEAD -- "$dir"; then state=unchanged; else state=check; run_buf=true; fi
+              # buf reads the PR's own config, so a PR could loosen its breaking rules in the same diff.
+              cfg=""
+              for f in buf.yaml buf.work.yaml; do
+                git diff --quiet "$BASE_SHA" HEAD -- "${dir%/.}/$f" 2>/dev/null || cfg="config"
+              done
+            elif $in_head; then state=new
+            elif $in_base; then state=removed
+            else state=empty
+            fi
+            printf '%s\t%s\t%s\n' "$dir" "$state" "${cfg:-}" >> "$work/buf-modules.tsv"
+          done < <(printf '%s' "$candidates" | sort -u)
+
+          echo "run_buf=$run_buf" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          cat "$work/buf-modules.tsv"
+
+      - name: Set up buf
+        if: steps.discover.outputs.run_buf == 'true'
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: ${{ env.BUF_VERSION }}
+          github_token: ${{ github.token }}
+
+      - name: Set up oasdiff
+        if: inputs.openapi_specs != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/${archive}"
+          echo "${OASDIFF_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/oasdiff-bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oasdiff-bin" oasdiff
+          echo "$RUNNER_TEMP/oasdiff-bin" >> "$GITHUB_PATH"
+
+      - name: Check for breaking changes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.discover.outputs.base_sha }}
+          OPENAPI_SPECS: ${{ inputs.openapi_specs }}
+          APPROVAL_LABEL: ${{ inputs.approval_label }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Fallback when the labels cannot be read live. A re-run keeps the payload of the original run.
+          PAYLOAD_LABELS: ${{ join(github.event.pull_request.labels.*.name, '|') }}
+        run: |
+          # No -e: GitHub's bash runs with it, and the exit codes of buf and oasdiff are handled below.
+          set +e
+          set -uo pipefail
+          work="$RUNNER_TEMP/contracts"
+          rows="$work/rows.md"
+          details="$work/details.md"
+          : > "$rows"; : > "$details"
+          breaking=0; errors=0
+
+          # Cap what one contract adds to the summary.
+          excerpt() {
+            head -n 60 <<< "$1"
+            if [ "$(grep -c '' <<< "$1")" -gt 60 ]; then echo "... truncated, see the job log for the rest"; fi
+          }
+          # shellcheck disable=SC2016 # the backticks are markdown
+          add_row() { printf '| `%s` | %s | %s |\n' "$1" "$2" "$3" >> "$rows"; }
+          add_details() { # name, heading, output
+            { printf '<details><summary>%s: %s</summary>\n\n```\n' "$1" "$2"; excerpt "$3"; printf '\n```\n\n</details>\n\n'; } >> "$details"
+          }
+
+          while IFS=$'\t' read -r dir state cfg; do
+            [ -n "$dir" ] || continue
+            case "$state" in
+              unchanged) add_row "$dir" "buf" "➖ untouched by this PR" ;;
+              new) add_row "$dir" "buf" "🆕 new module, nothing to compare with" ;;
+              empty) add_row "$dir" "buf" "❌ configured, but no .proto files found"; errors=$((errors + 1)) ;;
+              removed)
+                add_row "$dir" "buf" "❌ module removed"
+                breaking=$((breaking + 1)) ;;
+              check)
+                against=".git#ref=${BASE_SHA}"
+                [ "$dir" = . ] || against+=",subdir=${dir}"
+                out="$(buf breaking "$dir" --against "$against" 2>&1)"; rc=$?
+                note=""
+                [ -z "$cfg" ] || note=" ⚠️ buf.yaml changed in this PR: check its \`breaking:\` rules"
+                case "$rc" in
+                  0) add_row "$dir" "buf" "✅ compatible$note" ;;
+                  100)
+                    n="$(grep -c . <<< "$out")"
+                    add_row "$dir" "buf" "❌ $n breaking change(s)$note"
+                    add_details "$dir" "breaking changes" "$out"
+                    breaking=$((breaking + 1)) ;;
+                  *)
+                    add_row "$dir" "buf" "❌ buf failed (exit $rc)"
+                    add_details "$dir" "buf failed" "$out"
+                    errors=$((errors + 1)) ;;
+                esac ;;
+            esac
+          done < "$work/buf-modules.tsv"
+
+          if [ -n "$OPENAPI_SPECS" ]; then
+            git worktree add --detach "$RUNNER_TEMP/base-tree" "$BASE_SHA" > /dev/null \
+              || { echo "::error::Could not check out the base commit"; exit 1; }
+            while IFS= read -r spec; do
+              spec="${spec#./}"
+              [ -n "$spec" ] || continue
+              if [ ! -f "$spec" ] && [ ! -f "$RUNNER_TEMP/base-tree/$spec" ]; then
+                add_row "$spec" "openapi" "❌ configured, but the spec exists neither here nor at the base"
+                errors=$((errors + 1))
+              elif [ ! -f "$RUNNER_TEMP/base-tree/$spec" ]; then
+                add_row "$spec" "openapi" "🆕 new spec, nothing to compare with"
+              elif [ ! -f "$spec" ]; then
+                add_row "$spec" "openapi" "❌ spec removed"
+                breaking=$((breaking + 1))
+              else
+                out="$(oasdiff breaking "$RUNNER_TEMP/base-tree/$spec" "$spec" --fail-on ERR 2>&1)"; rc=$?
+                # oasdiff exits 1 on a change at --fail-on level, and 10x when it cannot read a spec.
+                case "$rc" in
+                  0)
+                    if [ -n "$out" ] && [ "$out" != "No changes detected" ]; then
+                      add_row "$spec" "openapi" "✅ compatible, with warnings"
+                      add_details "$spec" "warnings" "$out"
+                    else
+                      add_row "$spec" "openapi" "✅ compatible"
+                    fi ;;
+                  1)
+                    add_row "$spec" "openapi" "❌ breaking changes"
+                    add_details "$spec" "breaking changes" "$out"
+                    breaking=$((breaking + 1)) ;;
+                  *)
+                    add_row "$spec" "openapi" "❌ oasdiff failed (exit $rc)"
+                    add_details "$spec" "oasdiff failed" "$out"
+                    errors=$((errors + 1)) ;;
+                esac
+              fi
+            done <<< "$OPENAPI_SPECS"
+          fi
+
+          approved=false
+          if [ "$breaking" -gt 0 ] && [ -n "$PR_NUMBER" ]; then
+            if labels="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --paginate --jq '.[].name' 2>/dev/null)"; then
+              :
+            else
+              echo "::notice::Could not read the PR's labels live, so the labels from when the run started count."
+              labels="$(tr '|' '\n' <<< "$PAYLOAD_LABELS")"
+            fi
+            if [ -n "$APPROVAL_LABEL" ] && grep -Fxq -- "$APPROVAL_LABEL" <<< "$labels"; then approved=true; fi
+          fi
+
+          {
+            echo "## Contract breaking-change check"
+            echo
+            echo "Compared with the base commit \`${BASE_SHA:0:12}\`."
+            echo
+            if [ -s "$rows" ]; then
+              echo "| Contract | Kind | Result |"
+              echo "| --- | --- | --- |"
+              cat "$rows"
+              echo
+            else
+              echo "✅ Nothing to check: no Buf module (or all excluded) and no OpenAPI spec."
+              echo
+            fi
+            cat "$details"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          verdict() { echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          if [ "$errors" -gt 0 ]; then
+            verdict "❌ **Could not complete the check.** Fix the failure above. The \`${APPROVAL_LABEL}\` label does not cover it."
+            exit 1
+          elif [ "$breaking" -gt 0 ] && $approved; then
+            verdict "⚠️ **Breaking changes allowed.** The \`${APPROVAL_LABEL}\` label is on this PR, so they are warnings. Use it only for an intentional step of expand, migrate, contract, and make sure every consumer has migrated before the contract step."
+            echo "::warning::Breaking contract changes, allowed by the ${APPROVAL_LABEL} label"
+          elif [ "$breaking" -gt 0 ]; then
+            verdict "❌ **Breaking changes.** Consumers of this contract would break. Change it additively instead (expand, migrate, contract). If the break is intentional, add the \`${APPROVAL_LABEL}\` label and re-run this job."
+            exit 1
+          elif [ ! -s "$rows" ]; then
+            verdict "✅ **Passed.**"
+          elif ! grep -q '✅' "$rows"; then
+            verdict "✅ **Passed.** Nothing to compare in this PR."
+          else
+            verdict "✅ **Passed.** No breaking changes."
+          fi
