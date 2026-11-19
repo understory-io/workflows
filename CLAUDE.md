@@ -153,6 +153,15 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 - **Purpose**: Pull translations from Crowdin and open a PR
 - **Trigger**: `workflow_call`
 
+#### 9b. tests-passed (`tests-passed.yml`)
+
+- **Purpose**: one check (`tests-passed / tests-passed`) a ruleset can require on every PR, since path-filtered workflows leave their own required checks pending forever. Caller template in README.md: `on: pull_request` with no filters, `concurrency` per PR, `actions: read`, `checks: read`, `statuses: read`.
+- **Trigger**: `workflow_call`
+- **Inputs**: `ignore` (newline list; a line matches a check whose name equals it or fully matches it as a regex, or `<workflow name> / <check name>`), `timeout_minutes` (45), `settle_seconds` (60), `poll_seconds` (30), `sha` (default PR head), `runner` (`ubuntu-24.04-arm`)
+- **How it decides**: one `actions/github-script` step polls workflow runs, check runs (`filter: all`) and commit statuses for the head SHA. It drops every run of its own workflow (the caller file must hold only the gate), keeps the newest run per workflow and event, the newest check run per name within a run, and the newest status per context. success/neutral/skipped pass; anything else completed fails. A workflow run with no jobs counts as pending while running and as failed if it ended badly (`startup_failure` leaves no check run). The result is final after `settle_seconds` with nothing running and nothing new.
+- **Timeout**: the job's `timeout-minutes` is `timeout_minutes`; the script stops 90 s earlier to fail with the list of what is still running (no arithmetic in expressions).
+- **Test**: `tests-passed-selftest.yml` runs `test/tests-passed.mjs`, which cuts the script out of the YAML (by its 12-space indent) and runs it against a mocked API and a fake clock. Keep the script at that indent.
+
 ### Release Management Workflows
 
 #### 10. create-deployment-prs (`create-deployment-prs.yml`)

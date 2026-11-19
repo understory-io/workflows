@@ -1,0 +1,38 @@
+name: "tests-passed self-test"
+
+# Runs the gate's script against a mocked checks API, so a change to how it
+# reads results can't quietly turn the gate green on failures.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/tests-passed.yml"
+      - ".github/workflows/tests-passed-selftest.yml"
+      - "test/tests-passed.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/tests-passed.yml"
+      - ".github/workflows/tests-passed-selftest.yml"
+      - "test/tests-passed.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "Test"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Run the scenarios
+        run: node test/tests-passed.mjs .github/workflows/tests-passed.yml
