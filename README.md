@@ -121,6 +121,7 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 
 - **`contracts-breaking`** - Fail a PR that breaks a Buf or OpenAPI contract, compared with its base ([how to call it](#contract-breaking-changes))
 - **`tests-passed`** - One check to require on every PR: waits for every other check on the PR head commit and passes only if they all passed (see below)
+- **`ai-review`** - An AI reviewer comments on every PR: invariants, existing data, blast radius, proving tests (see below)
 - **`poeditor-check`** - Validate translations
 - **`crowdin-pull-translations`** - Pull Crowdin translations and open a PR
 
@@ -173,6 +174,42 @@ The check to require in the ruleset is **`tests-passed / tests-passed`** (GitHub
 - `ignore` lines also match as regular expressions against the whole name, so `.` matches any character; a bare job name such as `build` ignores it in every workflow. A deploy job that waits for an environment approval belongs here, or the gate times out.
 - A PR can edit its own copy of this file. When it becomes required, protect `.github/workflows/tests-passed.yml` with CODEOWNERS.
 - Dependabot's read-only token is enough; the gate only reads.
+
+### 🤖 `ai-review`: an adversarial AI reader for every PR
+
+A fresh Claude reads the PR's diff, plus the Linear issue named in its branch or title, and answers four questions: which invariant changes, which existing data it meets (stored rows, events, older clients), the blast radius, and which test proves it. It posts one PR comment, updated on each push, with a severity per finding.
+
+Add this file to a repo as `.github/workflows/ai-review.yml`:
+
+```yaml
+name: AI review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    uses: understory-io/workflows/.github/workflows/ai-review.yml@main
+    secrets:
+      anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+      linear_api_key: ${{ secrets.LINEAR_API_KEY }}
+    # with:
+    #   blocking: true     # fail on a high finding; leave off until calibrated
+    #   max_diff_kb: 120
+```
+
+- **Advisory by default.** Nothing in it fails unless `blocking: true`, and then only the `Report` job: on a high finding, or on a diff over `max_diff_kb` (so growing a PR can't turn a red review green). A review that can't finish says so in the comment and passes.
+- **One comment, always about the head.** When a newer commit isn't reviewed (skipped, too big, couldn't run), the comment is replaced by "commit … not reviewed" and the reason, so an older review never stands as current. A PR that was never reviewed gets no comment.
+- **Skips with a notice, never red:** no `ANTHROPIC_API_KEY` (also on fork PRs), drafts, bots (Renovate, Dependabot, Crowdin's `understory-services`), a diff over `max_diff_kb`. Deleted, lock and generated files (`linguist-generated` in the base branch's `.gitattributes`) are listed by name and don't count towards the limit. Every diff reads `.gitattributes` from the base, so a PR's own `-diff` or `binary` can't hide its code.
+- **Linear:** the issue key comes from the branch or title; issues of private teams are never read.
+- **Cost:** each review stops at `max_turns` (40) and `max_budget_usd` ($3), about $0.50 in calibration. A new push cancels the review still running, and a review after a push waits 90 s first, so a burst of pushes is reviewed once. Set a monthly spend limit on the Anthropic workspace that owns the key.
+- **Time:** `timeout_minutes` (25, at least 15) bounds the job. Claude Code stops 4 minutes before it, so the comment always says what happened. `tests-passed` waits for it, so keep the gate's own timeout above that.
+- **Safety:** call it from `pull_request`, never `pull_request_target`. Claude Code runs with Read, Grep and Glob only, confined to the checkout, and gets no token but its own key. A separate job with no key posts the comment.
 
 ## Environment Conventions
 

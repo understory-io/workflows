@@ -15,6 +15,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 │   ├── image-exists/  # Fail unless an image reference resolves
 │   ├── lambda-deploy/ # Lambda function deployment
 │   └── test-report/   # Test results as job summary, check run and PR comment
+├── ai-review/         # Script, prompt and schema of ai-review.yml
 └── workflows/         # Reusable workflows
 dash0/
 └── tests/             # Dash0 "Tests" dashboard over test-report's and the E2E reporters' spans, applied by hand (README.md)
@@ -243,6 +244,17 @@ dash0/
 - **How**: discovers modules from `git ls-tree` at the head and the base (a deleted module counts as breaking), skips untouched ones, and diffs against the base commit `github.event.pull_request.base.sha` in the default merge checkout, so a base that moved on after the branch point causes no false breaks. buf is `bufbuild/buf-setup-action` pinned by SHA and `BUF_VERSION`; oasdiff is the release tarball pinned by version and sha256 (`OASDIFF_VERSION`, `OASDIFF_SHA256`)
 - **Label**: read live from the API, so a re-run honours a label added after the run; falls back to the event payload. Breaking changes become warnings; a failure to run (build error, unreadable spec) always fails
 - **Not a publisher**: do not add `fungus publish` here. fungus's own `contracts.yml` publishes unstable versions to the production registry per PR
+
+#### 17. ai-review (`ai-review.yml`)
+
+- **Purpose**: an adversarial AI review of each PR as a check plus one PR comment (`<!-- understory-ai-review -->`, updated in place, only the github-actions bot's own comment). Fixed questions: invariants, existing data, blast radius, proving tests; findings carry high/medium/low. Caller template in README.md
+- **Trigger**: `workflow_call` from `on: pull_request` (never `pull_request_target`: the PR is untrusted input)
+- **Inputs**: `blocking` (false), `model` (`claude-opus-5-5`), `effort` (high), `max_diff_kb` (120; a 177 KB diff is calibrated in the PR), `max_turns` (40), `max_budget_usd` (3), `timeout_minutes` (25, at least 15: the gate fails on less). Secrets: `anthropic_api_key`, `linear_api_key` (both optional)
+- **Code**: `.github/ai-review/` — `review.mjs` (subcommands `linear`, `prepare`, `run`, `render`), `prompt.md` (appended system prompt with the questions and severity rubric), `schema.json` (`--json-schema` structured output). Checked out from `job.workflow_repository@job.workflow_sha` like test-report
+- **Jobs**: `review` (contents: read, the key) gates, checks out the merge commit (`HEAD^1..HEAD` is the PR), fetches the Linear issue (never a private team's), builds the prompt (every git diff runs with `GIT_ATTR_SOURCE=<base>`, git 2.40+; generated files by the base's attributes, via a scratch index), waits 90 s after a push, installs Claude Code `2.1.318` in a step without the key, runs it with `--restricted --safe-mode --tools Read,Grep,Glob --permission-prompts none` and an env of PATH/HOME/USER/LANG/TMPDIR/key only, then renders. The gate writes `JOB_DEADLINE`; `run` stops Claude Code 4 min before it (`error_timeout`, or `error_no_time` when it can't start), and every other step has a `timeout-minutes` small enough that render and status always run before the job times out (the selftest keeps their sum under 15 − 4). When there is no review, the `status` step renders "commit … not reviewed: <reason>" (output `mode: status`). `report` (pull-requests: write, no key, no PR checkout) posts the comment if the head hasn't moved: a review creates or updates it, a status only updates an existing one. Then the Verdict step
+- **Never red in advisory mode**: every step that can fail has `continue-on-error: true`; only Verdict exits 1, and only when `blocking` and either `high > 0` or the diff is over the limit (`oversize`), plus the gate on a `timeout_minutes` under 15. Skips (no key, draft, bot, too big) are `::notice`s. Keep it that way: `tests-passed` counts any failed check
+- **Untrusted text**: PR text, the issue and the diff go in a per-run random `untrusted-<hex>` tag; `text()` escapes `&` `<` `>` and backslash-escapes every run of 3+ backticks or tildes (no fence), and breaks `@`, `://`, `www.`, `](`, `][`, `]:`, `![`, `#<digit>` and `GH-<digit>` with a zero-width space; `code()` keeps only path characters on one line. Keys and token-shaped strings are redacted in each field before `text()`, as `‹redacted›`: nothing after `text()` may add markdown (a `[redacted]` placeholder once rebuilt links). The selftest renders a hostile review (`ATTACKS`, through the `render` CLI) via `POST /markdown` (needs `GITHUB_TOKEN`) and allows only the run link. The findings table must stay one `\n`-joined block. Don't print PR file names or text to the log (workflow commands)
+- **Test**: `ai-review-selftest.yml` runs `test/ai-review.mjs` (diff building, prompt, Claude Code flags and env via a fake binary, rendering, redaction, and the workflow's pins and `continue-on-error` rules)
 
 ## Usage Patterns
 

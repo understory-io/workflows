@@ -1,0 +1,297 @@
+name: AI review
+
+# A fresh AI reviewer reads every PR's diff, plus the Linear issue named in its branch or title, and asks:
+# which invariant changes, which existing data it meets, the blast radius, and which test proves it. It posts
+# one PR comment, updated in place, with a severity per finding.
+#
+# Advisory by default: nothing in it fails unless the caller sets `blocking: true`, and then only on a high
+# finding, or on a `timeout_minutes` under 15. A missing key, a draft, a bot's PR or a diff over the limit skip
+# the review with a notice.
+#
+# The PR is untrusted input. Call it from `on: pull_request`, never `pull_request_target`. The review job holds
+# the Anthropic key and a read-only token; Claude Code runs with only Read, Grep and Glob, confined to the
+# checkout. The report job, with no key and no checkout of the PR, posts the comment. Caller template in README.md.
+
+on:
+  workflow_call:
+    inputs:
+      blocking:
+        description: Fail the check when the review has a high finding. Leave off until calibrated.
+        type: boolean
+        default: false
+      model:
+        description: Claude model
+        type: string
+        default: claude-opus-5-5
+      effort:
+        description: Claude effort level (low, medium, high, xhigh, max)
+        type: string
+        default: high
+      max_diff_kb:
+        description: >-
+          Skip the review when the diff, without deleted, lock and generated files, is larger than this. With
+          `blocking`, a larger diff fails the check. 120 KB is about 35k tokens, re-read on every turn.
+        type: number
+        default: 120
+      max_turns:
+        description: Most agent turns per review
+        type: number
+        default: 40
+      max_budget_usd:
+        description: Most dollars one review may spend; it stops unfinished at this
+        type: number
+        default: 3
+      timeout_minutes:
+        description: >-
+          Timeout of the review job, in whole minutes, at least 15. Claude Code stops 4 minutes before it, so the
+          comment is always updated; setup and the 90 s wait after a push take ~3-8 of the rest.
+        type: number
+        default: 25
+    secrets:
+      anthropic_api_key:
+        description: Anthropic API key. Without it the review is skipped with a notice.
+        required: false
+      linear_api_key:
+        description: Linear API key (read). Without it the review sees only the PR's title and description.
+        required: false
+
+jobs:
+  review:
+    name: Review
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    permissions:
+      contents: read
+    # A new push replaces a review still running for the PR.
+    concurrency:
+      group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    outputs:
+      body: ${{ steps.render.outputs.body || steps.status.outputs.body }}
+      high: ${{ steps.render.outputs.high }}
+      # review: a fresh review, posted or updated. status: this commit wasn't reviewed, which only updates an
+      # existing comment, so an older commit's review never stands as if it were current.
+      mode: ${{ steps.render.outputs.body && 'review' || 'status' }}
+      oversize: ${{ steps.prepare.outputs.oversize }}
+    env:
+      OUT_DIR: ${{ github.workspace }}/.ai-review-out
+      REPO_DIR: ${{ github.workspace }}/pr
+      TOOLS: ${{ github.workspace }}/.understory-workflows/.github/ai-review
+    steps:
+      - name: Decide whether to review
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          HAS_KEY: ${{ secrets.anthropic_api_key != '' }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          USER_TYPE: ${{ github.event.pull_request.user.type }}
+          LOGIN: ${{ github.event.pull_request.user.login }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+        run: |
+          # A caller's mistake, so it fails here rather than leaving too little time to review and report.
+          if ! [[ "$TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] || [ "$TIMEOUT_MINUTES" -lt 15 ]; then
+            skip="timeout_minutes is $TIMEOUT_MINUTES; it must be a whole number of minutes, at least 15"
+            echo "::error title=AI review::$skip"
+            echo "skip=$skip" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          # When the job times out (this step starts with it), so Claude Code stops in time for the comment.
+          echo "JOB_DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))" >> "$GITHUB_ENV"
+          skip=""
+          if [ "$EVENT" != pull_request ]; then skip="it runs only on pull_request events, not $EVENT"
+          elif [ "$DRAFT" = true ]; then skip="the PR is a draft; it runs when the PR is marked ready"
+          elif [ "$USER_TYPE" = Bot ] || [[ "$LOGIN" =~ ^(renovate|dependabot|understory-services) ]]; then skip="the PR is from a bot ($LOGIN)"
+          elif [ "$HAS_KEY" != true ]; then skip="no Anthropic API key reaches this workflow: an org admin adds the ANTHROPIC_API_KEY secret (fork PRs never get it). Nothing is wrong with this PR"
+          fi
+          if [ -n "$skip" ]; then echo "::notice title=AI review skipped::$skip"; fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      # The default checkout is the PR merged into its base: HEAD^1 is the base, so HEAD^1..HEAD is the PR's change.
+      - name: Check out the PR
+        timeout-minutes: 3
+        if: steps.gate.outputs.skip == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pr
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Check out the review tooling
+        timeout-minutes: 1
+        if: steps.gate.outputs.skip == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: .github/ai-review
+          persist-credentials: false
+
+      - name: Set up Node
+        timeout-minutes: 1
+        if: steps.gate.outputs.skip == ''
+        continue-on-error: true
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Read the linked Linear issue
+        timeout-minutes: 1
+        if: steps.gate.outputs.skip == ''
+        continue-on-error: true
+        env:
+          LINEAR_API_KEY: ${{ secrets.linear_api_key }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          mkdir -p "$OUT_DIR"
+          if [ -z "$LINEAR_API_KEY" ]; then echo "No Linear key: reviewing with the PR's own title and description"; exit 0; fi
+          node "$TOOLS/review.mjs" linear
+
+      - name: Prepare the diff
+        timeout-minutes: 2
+        id: prepare
+        if: steps.gate.outputs.skip == ''
+        continue-on-error: true
+        env:
+          REPOSITORY: ${{ github.repository }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          MAX_DIFF_KB: ${{ inputs.max_diff_kb }}
+        run: |
+          mkdir -p "$OUT_DIR"
+          # Claude Code already refuses symlinks out of the checkout; drop them anyway. Names aren't printed: a
+          # file name is PR content, and a line of it could be read as a workflow command.
+          echo "symlinks removed: $(find "$REPO_DIR" -type l -not -path "$REPO_DIR/.git/*" -print0 -delete | tr -cd '\0' | wc -c)"
+          node "$TOOLS/review.mjs" prepare
+
+      - name: Skipped
+        if: steps.prepare.outputs.skip != ''
+        env:
+          SKIP: ${{ steps.prepare.outputs.skip }}
+        run: echo "::notice title=AI review skipped::$SKIP"
+
+      # A push within this wait cancels the run (concurrency above) before it spends anything.
+      - name: Let quick pushes settle
+        timeout-minutes: 2
+        if: steps.prepare.outcome == 'success' && steps.prepare.outputs.skip == '' && github.event.action == 'synchronize'
+        continue-on-error: true
+        run: sleep 90
+
+      # Its own step, without the key: npm install scripts never see it.
+      - name: Install Claude Code
+        timeout-minutes: 2
+        id: install
+        if: steps.prepare.outcome == 'success' && steps.prepare.outputs.skip == ''
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_VERSION: 2.1.318
+        run: timeout 100 npm install --no-audit --no-fund --silent --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+
+      - name: Review
+        id: claude
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic_api_key }}
+          MODEL: ${{ inputs.model }}
+          EFFORT: ${{ inputs.effort }}
+          MAX_TURNS: ${{ inputs.max_turns }}
+          MAX_BUDGET_USD: ${{ inputs.max_budget_usd }}
+        # Claude Code stops 4 minutes before JOB_DEADLINE, set by the gate.
+        run: CLAUDE_BIN="$RUNNER_TEMP/claude/node_modules/.bin/claude" node "$TOOLS/review.mjs" run
+
+      - name: Render the comment
+        timeout-minutes: 1
+        id: render
+        if: steps.claude.outcome == 'success' || steps.claude.outcome == 'failure'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic_api_key }}
+          LINEAR_API_KEY: ${{ secrets.linear_api_key }}
+          BLOCKING: ${{ inputs.blocking }}
+          MODEL: ${{ inputs.model }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node "$TOOLS/review.mjs" render
+
+      - name: Say why this commit wasn't reviewed
+        timeout-minutes: 1
+        id: status
+        if: ${{ !cancelled() && steps.render.outputs.body == '' && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GATE: ${{ steps.gate.outcome }}
+          GATE_SKIP: ${{ steps.gate.outputs.skip }}
+          PREPARE_SKIP: ${{ steps.prepare.outputs.skip }}
+          PREPARE: ${{ steps.prepare.outcome }}
+          INSTALL: ${{ steps.install.outcome }}
+          OVERSIZE: ${{ steps.prepare.outputs.oversize }}
+          BLOCKING: ${{ inputs.blocking }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          reason="${GATE_SKIP:-$PREPARE_SKIP}"
+          if [ -z "$reason" ] && [ "$PREPARE" = failure ]; then reason="the diff couldn't be prepared"; fi
+          if [ -z "$reason" ] && [ "$INSTALL" = failure ]; then reason="Claude Code couldn't be installed"; fi
+          if [ -z "$reason" ]; then reason="the review didn't run"; fi
+          effect="This never blocks a merge."
+          if [ "$BLOCKING" = true ] && [ "$OVERSIZE" = true ]; then effect="This fails the check, since it is blocking."; fi
+          if [ "$GATE" = failure ]; then effect="This fails the check until the calling workflow is fixed."; fi
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "body<<$delim"
+            printf '<!-- understory-ai-review -->\n### AI review: commit `%s` not reviewed\n\n%s. %s\n\n<sub>[run](%s)</sub>\n' "${HEAD_SHA:0:12}" "$reason" "$effect" "$RUN_URL"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+  report:
+    name: Report
+    needs: review
+    if: ${{ !cancelled() && needs.review.outputs.body != '' && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post or update the comment
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BODY: ${{ needs.review.outputs.body }}
+          MODE: ${{ needs.review.outputs.mode }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          retries: 3
+          script: |
+            const MARKER = '<!-- understory-ai-review -->';
+            const { owner, repo } = context.repo;
+            const issue_number = Number(process.env.PR);
+            // Runs can finish out of order; only the review of the PR's current head may show.
+            const pr = (await github.rest.pulls.get({ owner, repo, pull_number: issue_number })).data;
+            if (pr.head.sha !== process.env.HEAD_SHA) return core.notice('the PR has a newer commit; leaving the comment to its review');
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const mine = comments.find((c) => c.user?.login === 'github-actions[bot]' && c.body?.startsWith(MARKER));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: process.env.BODY });
+            else if (process.env.MODE === 'review') await github.rest.issues.createComment({ owner, repo, issue_number, body: process.env.BODY });
+
+      - name: Verdict
+        env:
+          BLOCKING: ${{ inputs.blocking }}
+          HIGH: ${{ needs.review.outputs.high }}
+          OVERSIZE: ${{ needs.review.outputs.oversize }}
+        run: |
+          # A PR can't turn a red review green by growing past the limit.
+          if [ "$BLOCKING" = true ] && [ "$OVERSIZE" = true ]; then
+            echo "::error title=AI review::the diff is over max_diff_kb, so it wasn't reviewed; split the PR or raise the limit"
+            exit 1
+          fi
+          if [ "$BLOCKING" = true ] && [ "${HIGH:-0}" != 0 ]; then
+            echo "::error title=AI review::$HIGH high finding(s); see the PR comment"
+            exit 1
+          fi
+          echo "${HIGH:-0} high finding(s); blocking: $BLOCKING"
