@@ -93,7 +93,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 **Purpose**: Show test results on every run: a job summary (counts, failed tests with their output, time, slowest tests), a check run with annotations, and one PR comment per `title` that each run updates. Uploads the JUnit files as an artifact. Built on `mikepenz/action-junit-report` (SHA-pinned) plus `report.py` for the counts and the slowest tests. With `go-module-dir`, `report.py` also gives each Go failure the file and line of the `_test.go` line it reports; the reporter would otherwise read the package path as a Java class and annotate a file that doesn't exist.
 
-**Inputs**: `junit-path` (required, newline-separated globs), `title` (required; names the check and identifies the comment, so unique per PR), `artifact-name` (default `test-results`, unique per run), `go-module-dir` (optional), `token` (default `github.token`).
+**Inputs**: `junit-path` (required, newline-separated globs), `title` (required; names the check and identifies the comment, so unique per PR), `artifact-name` (default `test-results`, unique per run), `go-module-dir` (optional), `test-outcome` (optional; when the results disagree with it, e.g. a cancelled run, only the summary gets them), `token` (default `github.token`).
 
 **Never fails the build**: it ignores test failures, and before publishing it probes whether the token may write checks and PR comments with requests that change nothing (`PATCH …/check-runs/0`, then `DELETE …/issues/<pr>/labels/<absent label>`: 404 means allowed, 403 not; `PATCH …/issues/comments/0` answers 404 either way, so it can't serve). Without permission (Dependabot, or a caller that narrowed `permissions:`) it writes the job summary only. Callers still put `continue-on-error: true` on the step.
 
@@ -149,7 +149,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 - **Purpose**: CI pipeline for Go libraries (Mise-based toolchain)
 - **Trigger**: `workflow_call`
-- **What it does**: checkout → Setup Go (`go-version-file: go.mod`, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download && go mod tidy` → LocalStack cache/load (optional) → `mise run test` (output teed and converted to JUnit for the `test-report` action, title `Go tests`) → `mise run build` → Go cache save (main only)
+- **What it does**: checkout → Setup Go (`go-version-file: go.mod`, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download && go mod tidy` → LocalStack cache/load (optional) → `mise run test` (output teed and converted to JUnit for the `test-report` action, title `Go tests`, artifact `go-test-results`) → `mise run build` → Go cache save (main only)
 
 ### Testing & Quality Workflows
 
@@ -196,7 +196,7 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
   - `app_dir` (required): path to the app, e.g. "apps/bookings-core"
   - `localstack_image` (optional, default: `localstack/localstack`): allows pinning a specific version
 - **Key Secret**: `go_private_modules_pat`
-- **What it does**: checkout → Setup Go (`go-version-file` from the app's own go.mod, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download -x` → LocalStack cache/load → `mise local:up` → `mise test` (output teed and converted to JUnit for the `test-report` action, title `Go tests (<app_name>)`, artifact `test-results-<app_name>`) → `mise build` → artifact upload → Go cache save (main only)
+- **What it does**: checkout → Setup Go (`go-version-file` from the app's own go.mod, ahead of mise so mise's `go:`-backend tool resolution never runs against the runner's older baked-in Go) → private Go module config → Mise install → Go cache restore → `go mod download -x` → LocalStack cache/load → `mise local:up` → `mise test` (output teed and converted to JUnit for the `test-report` action, title `Go tests (<app_name>)`, artifact `go-test-results-<app_name>`) → `mise build` → artifact upload → Go cache save (main only)
 - **Cache key fix**: uses `hashFiles(format('{0}/go.mod', inputs.app_dir))` to correctly hash the subdirectory go.mod (nested `${{ }}` inside `hashFiles()` is not evaluated by GitHub Actions)
 
 ### Utility Workflows

@@ -108,13 +108,18 @@ jobs:
         continue-on-error: true
         run: |
           [ -s "$RUNNER_TEMP/go-test.log" ] || exit 0
-          GOFLAGS='' GOBIN="$RUNNER_TEMP/bin" go install github.com/jstemmer/go-junit-report/v2@v2.1.0
+          # A warning rather than a failed step, which would add an error to the run.
           mkdir -p "$RUNNER_TEMP/test-results"
-          "$RUNNER_TEMP/bin/go-junit-report" -in "$RUNNER_TEMP/go-test.log" -out "$RUNNER_TEMP/test-results/go-test.xml"
-          echo "path=$RUNNER_TEMP/test-results/go-test.xml" >> "$GITHUB_OUTPUT"
+          if GOFLAGS='' GOBIN="$RUNNER_TEMP/bin" go install github.com/jstemmer/go-junit-report/v2@v2.1.0 &&
+            "$RUNNER_TEMP/bin/go-junit-report" -in "$RUNNER_TEMP/go-test.log" -out "$RUNNER_TEMP/test-results/go-test.xml"; then
+            echo "path=$RUNNER_TEMP/test-results/go-test.xml" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not convert the test output to JUnit, so there is no test report"
+          fi
 
       # See ci-go-mise-lambda.yml for why the action is checked out here.
       - name: Checkout the test-report action
+        id: report-action
         if: always() && steps.junit.outputs.path != ''
         continue-on-error: true
         uses: actions/checkout@v6
@@ -126,13 +131,15 @@ jobs:
           persist-credentials: false
 
       - name: Report test results
-        if: always() && steps.junit.outputs.path != ''
+        if: always() && steps.report-action.outcome == 'success'
         continue-on-error: true
         uses: ./.understory-workflows/.github/actions/test-report
         with:
           junit-path: ${{ steps.junit.outputs.path }}
+          test-outcome: ${{ steps.tests.outcome }}
           go-module-dir: .
           title: Go tests
+          artifact-name: go-test-results
 
       - name: Build module
         run: mise run build

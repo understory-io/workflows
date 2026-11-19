@@ -26,6 +26,14 @@ inputs:
       reporter guesses a path from the package name, which matches no file.
     required: false
     default: ""
+  test-outcome:
+    description: >-
+      Outcome of the step that ran the tests (`steps.<id>.outcome`). When the
+      results disagree with it (a cancelled run's partial results, or output that
+      only looks like a failure), only the job summary gets them, so the check
+      and the comment never contradict the build.
+    required: false
+    default: ""
   token:
     description: Token for the check run and the comment.
     required: false
@@ -53,19 +61,30 @@ runs:
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
         python3 -I "$GITHUB_ACTION_PATH/report.py" "$PATTERNS" "$dir/slowest.md" "$GO_MODULE_DIR"
 
-    # The JUnit reporter turns a missing permission into an error annotation (check)
+    # Results that disagree with the test step stay in the summary. Otherwise: the
+    # JUnit reporter turns a missing permission into an error annotation (check)
     # or a failed step (comment), so ask first, with requests that change nothing.
     # Updating check run 0 gets 404 with checks: write and 403 without. Removing a
     # label the PR doesn't have gets 404 with pull-requests: write and 403 without.
     # (Updating comment 0 doesn't work as a probe: it gets 404 either way.)
-    - name: Check what the token may write
+    - name: Decide where the report goes
       id: access
       if: steps.count.outputs.tests > 0
       shell: bash
       env:
         TOKEN: ${{ inputs.token }}
         PR: ${{ github.event.pull_request.number }}
+        OUTCOME: ${{ inputs.test-outcome }}
+        FAILED: ${{ steps.count.outputs.failed }}
       run: |
+        case "$OUTCOME/$FAILED" in
+          /*|success/0|failure/[1-9]*) echo "agrees=true" >> "$GITHUB_OUTPUT" ;;
+          *)
+            echo "agrees=false" >> "$GITHUB_OUTPUT"
+            echo "checks=false" >> "$GITHUB_OUTPUT"
+            echo "comment=false" >> "$GITHUB_OUTPUT"
+            exit 0 ;;
+        esac
         allowed() {
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X "$1" \
             -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
@@ -91,6 +110,7 @@ runs:
         report_paths: ${{ inputs.junit-path }}
         check_name: ${{ inputs.title }}
         annotate_only: ${{ steps.access.outputs.checks != 'true' }}
+        skip_annotations: ${{ steps.access.outputs.agrees == 'false' }}
         comment: ${{ steps.access.outputs.comment == 'true' }}
         updateComment: "true"
         job_summary: "true"
@@ -115,16 +135,21 @@ runs:
         PATTERNS: ${{ inputs.junit-path }}
         TESTS: ${{ steps.count.outputs.tests }}
         DIR: ${{ steps.count.outputs.dir }}
+        AGREES: ${{ steps.access.outputs.agrees }}
+        OUTCOME: ${{ inputs.test-outcome }}
         CHECKS: ${{ steps.access.outputs.checks }}
         COMMENT: ${{ steps.access.outputs.comment }}
         PR: ${{ github.event.pull_request.number }}
       run: |
         {
           if [ "${TESTS:-0}" -eq 0 ]; then
-            printf '### %s\n\nNo test results found in `%s`.\n\n' "$TITLE" "$PATTERNS"
+            printf '### %s\n\nNo test results found in `%s`. Go reports each test only with `go test -v`.\n\n' "$TITLE" "$PATTERNS"
           else
             [ -s "$DIR/slowest.md" ] && cat "$DIR/slowest.md"
-            if [ "$CHECKS" != true ] || { [ -n "$PR" ] && [ "$COMMENT" != true ]; }; then
+            if [ "$AGREES" = false ]; then
+              echo "> The test step's outcome was \`$OUTCOME\`, which these results don't match, so they are only here and not in a check or PR comment."
+              echo
+            elif [ "$CHECKS" != true ] || { [ -n "$PR" ] && [ "$COMMENT" != true ]; }; then
               echo "> This job's token can't write checks or PR comments (Dependabot, or the caller narrowed \`permissions:\`), so the report is only here."
               echo
             fi
@@ -139,3 +164,4 @@ runs:
         path: ${{ inputs.junit-path }}
         if-no-files-found: ignore
         overwrite: true
+        retention-days: 14

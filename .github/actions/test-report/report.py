@@ -38,8 +38,15 @@ def duration(secs):
     return f"{int(secs // 60)}m {secs % 60:.0f}s"
 
 
+def oneline(err):
+    return str(err).replace("%", "%25").replace("\r", " ").replace("\n", " ")
+
+
 def cell(text):
     return "`" + text.replace("`", "'").replace("|", "\\|").replace("\n", " ") + "`"
+
+
+OUTPUT_LINES = 200
 
 
 def locate_go_failures(tree, module_dir):
@@ -47,24 +54,34 @@ def locate_go_failures(tree, module_dir):
         module = next(line.split()[1] for line in mod if line.startswith("module "))
     changed = False
     unplaced = []
-    for case in tree.iter("testcase"):
-        failure = case.find("failure")
-        if failure is None:
-            failure = case.find("error")
-        package = case.get("classname", "")
-        if failure is None or case.get("file") or not (package + "/").startswith(module + "/"):
-            continue
-        unplaced.append(case)
-        # The last one: logs come before the failure, and t.Fatal ends the test.
-        matches = re.findall(r"([\w.-]+_test\.go):(\d+):", failure.text or "")
-        if not matches:
-            continue
-        name, line = matches[-1]
-        path = os.path.normpath(os.path.join(module_dir, package[len(module):].lstrip("/"), name))
-        if os.path.isfile(path):
-            case.set("file", path)
-            case.set("line", line)
-            changed = True
+    for suite in tree.iter("testsuite"):
+        suite_output = suite.findtext("system-out") or ""
+        for case in suite.findall("testcase"):
+            failure = case.find("failure")
+            if failure is None:
+                failure = case.find("error")
+            package = case.get("classname", "")
+            if failure is None or case.get("file") or not (package + "/").startswith(module + "/"):
+                continue
+            # go-junit-report leaves a panic's stack, and all output of a run
+            # without -v, in the package's output rather than the test's.
+            if not (failure.text or "").strip() and suite_output.strip():
+                failure.text = "\n".join(suite_output.splitlines()[-OUTPUT_LINES:])
+                changed = True
+            unplaced.append(case)
+            text = failure.text or ""
+            # A panic's innermost test frame; otherwise the last reported line, as
+            # logs come before the failure and t.Fatal ends the test.
+            frames = re.findall(r"([\w.-]+_test\.go):(\d+) \+0x", text)
+            lines = re.findall(r"([\w.-]+_test\.go):(\d+):", text)
+            if not (frames or lines):
+                continue
+            name, line = frames[0] if frames else lines[-1]
+            path = os.path.normpath(os.path.join(module_dir, package[len(module):].lstrip("/"), name))
+            if os.path.isfile(path):
+                case.set("file", path)
+                case.set("line", line)
+                changed = True
     # A parent fails because a subtest did and reports no line of its own:
     # point it at that subtest's.
     placed = [c for c in tree.iter("testcase") if c.get("file")]
@@ -90,14 +107,14 @@ def main():
         try:
             tree = ET.parse(path)
         except (ET.ParseError, OSError) as err:
-            print(f"::warning::skipping {path}, which is not readable JUnit: {err}")
+            print(f"::warning::skipping {path}, which is not readable JUnit: {oneline(err)}")
             continue
         if go_module_dir:
             try:
                 if locate_go_failures(tree, go_module_dir):
                     tree.write(path, encoding="UTF-8", xml_declaration=True)
             except (OSError, StopIteration) as err:
-                print(f"::warning::could not place failures in {go_module_dir}: {err}")
+                print(f"::warning::could not place failures in {go_module_dir}: {oneline(err)}")
         for case in tree.iter("testcase"):
             if case.find("failure") is not None or case.find("error") is not None:
                 status = "failed"
