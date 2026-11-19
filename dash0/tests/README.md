@@ -27,8 +27,9 @@ dash0 apply -f dash0/tests/             # creates or updates
 
 Or import `dashboard.yaml` in Dash0 under Dashboards.
 
-On create, Dash0 assigns its own id. After the first apply, add it to the file as
-`metadata.dash0Extensions.id`, or the next apply creates a second dashboard. Edit the
+On create, Dash0 assigns its own id, kept in the file as `metadata.dash0Extensions.id`
+so the next apply updates that dashboard instead of creating a second one (first
+applied 2026-11-19, dashboard `2b05958c-c55c-4164-af2b-457eaf2f477f`). Edit the
 dashboard here and apply it again rather than in the Dash0 UI, or the next apply
 reverts the edit.
 
