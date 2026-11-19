@@ -91,11 +91,11 @@ This repository contains **shared GitHub Actions actions and workflows** used ac
 
 ### 4. test-report (`/.github/actions/test-report/action.yml`)
 
-**Purpose**: Show test results on every run: a job summary (counts, failed tests with their output, time, slowest tests), a check run with annotations, and one PR comment per `title` that each run updates. Uploads the JUnit files as an artifact. Built on `mikepenz/action-junit-report` (SHA-pinned) plus `report.py` for the counts and the slowest tests.
+**Purpose**: Show test results on every run: a job summary (counts, failed tests with their output, time, slowest tests), a check run with annotations, and one PR comment per `title` that each run updates. Uploads the JUnit files as an artifact. Built on `mikepenz/action-junit-report` (SHA-pinned) plus `report.py` for the counts and the slowest tests. With `go-module-dir`, `report.py` also gives each Go failure the file and line of the `_test.go` line it reports; the reporter would otherwise read the package path as a Java class and annotate a file that doesn't exist.
 
-**Inputs**: `junit-path` (required, newline-separated globs), `title` (required; names the check and identifies the comment, so unique per PR), `artifact-name` (default `test-results`, unique per run), `token` (default `github.token`).
+**Inputs**: `junit-path` (required, newline-separated globs), `title` (required; names the check and identifies the comment, so unique per PR), `artifact-name` (default `test-results`, unique per run), `go-module-dir` (optional), `token` (default `github.token`).
 
-**Never fails the build**: it ignores test failures, and before publishing it probes whether the token may write checks and PR comments (`PATCH …/check-runs/0` and `…/issues/comments/0`: 404 means allowed, 403 not). Without permission (Dependabot, or a caller that narrowed `permissions:`) it writes the job summary only. Callers still put `continue-on-error: true` on the step.
+**Never fails the build**: it ignores test failures, and before publishing it probes whether the token may write checks and PR comments with requests that change nothing (`PATCH …/check-runs/0`, then `DELETE …/issues/<pr>/labels/<absent label>`: 404 means allowed, 403 not; `PATCH …/issues/comments/0` answers 404 either way, so it can't serve). Without permission (Dependabot, or a caller that narrowed `permissions:`) it writes the job summary only. Callers still put `continue-on-error: true` on the step.
 
 **Used by**: `ci-go-mise-lambda.yml` and `ci-go-library-mise.yml`, which tee `mise test` into a log and convert it with go-junit-report v2. They check the action out from `job.workflow_repository@job.workflow_sha` into `.understory-workflows/` (like terraform.yml's semgrep rules) rather than `uses: …@main`: callers get the action that matches the workflow they pinned, and a failed checkout fails one `continue-on-error` step instead of the job's setup.
 
