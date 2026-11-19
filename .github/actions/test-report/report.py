@@ -46,6 +46,7 @@ def locate_go_failures(tree, module_dir):
     with open(os.path.join(module_dir, "go.mod"), encoding="utf-8") as mod:
         module = next(line.split()[1] for line in mod if line.startswith("module "))
     changed = False
+    unplaced = []
     for case in tree.iter("testcase"):
         failure = case.find("failure")
         if failure is None:
@@ -53,6 +54,7 @@ def locate_go_failures(tree, module_dir):
         package = case.get("classname", "")
         if failure is None or case.get("file") or not (package + "/").startswith(module + "/"):
             continue
+        unplaced.append(case)
         # The last one: logs come before the failure, and t.Fatal ends the test.
         matches = re.findall(r"([\w.-]+_test\.go):(\d+):", failure.text or "")
         if not matches:
@@ -62,6 +64,18 @@ def locate_go_failures(tree, module_dir):
         if os.path.isfile(path):
             case.set("file", path)
             case.set("line", line)
+            changed = True
+    # A parent fails because a subtest did and reports no line of its own:
+    # point it at that subtest's.
+    placed = [c for c in tree.iter("testcase") if c.get("file")]
+    for case in unplaced:
+        if case.get("file"):
+            continue
+        prefix = case.get("name", "") + "/"
+        child = next((c for c in placed if c.get("classname") == case.get("classname") and c.get("name", "").startswith(prefix)), None)
+        if child is not None:
+            case.set("file", child.get("file"))
+            case.set("line", child.get("line"))
             changed = True
     return changed
 
