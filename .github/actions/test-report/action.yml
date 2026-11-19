@@ -19,6 +19,13 @@ inputs:
     description: Artifact the JUnit files are uploaded as; unique within the workflow run.
     required: false
     default: test-results
+  go-module-dir:
+    description: >-
+      Directory of the Go module (with its go.mod) the results come from. Points
+      each failure's annotation at the `_test.go` line it reports; without it the
+      reporter guesses a path from the package name, which matches no file.
+    required: false
+    default: ""
   token:
     description: Token for the check run and the comment.
     required: false
@@ -40,14 +47,17 @@ runs:
       shell: bash
       env:
         PATTERNS: ${{ inputs.junit-path }}
+        GO_MODULE_DIR: ${{ inputs.go-module-dir }}
       run: |
         dir=$(mktemp -d "$RUNNER_TEMP/test-report.XXXXXX")
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
-        python3 -I "$GITHUB_ACTION_PATH/report.py" "$PATTERNS" "$dir/slowest.md"
+        python3 -I "$GITHUB_ACTION_PATH/report.py" "$PATTERNS" "$dir/slowest.md" "$GO_MODULE_DIR"
 
     # The JUnit reporter turns a missing permission into an error annotation (check)
-    # or a failed step (comment), so ask first. Updating id 0 changes nothing: a token
-    # with the permission gets 404, one without gets 403 before the id is looked up.
+    # or a failed step (comment), so ask first, with requests that change nothing.
+    # Updating check run 0 gets 404 with checks: write and 403 without. Removing a
+    # label the PR doesn't have gets 404 with pull-requests: write and 403 without.
+    # (Updating comment 0 doesn't work as a probe: it gets 404 either way.)
     - name: Check what the token may write
       id: access
       if: steps.count.outputs.tests > 0
@@ -57,18 +67,20 @@ runs:
         PR: ${{ github.event.pull_request.number }}
       run: |
         allowed() {
-          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X PATCH \
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X "$1" \
             -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
-            -d '{}' "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/$1") || true
-          echo "PATCH $1 -> ${code:-none}" >&2
-          case "$code" in 404|422) echo true ;; *) echo false ;; esac
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/$2") || true
+          echo "$1 $2 -> ${code:-none}" >&2
+          [ "$code" = 404 ]
         }
-        echo "checks=$(allowed check-runs/0)" >> "$GITHUB_OUTPUT"
-        if [ -n "$PR" ]; then
-          echo "comment=$(allowed issues/comments/0)" >> "$GITHUB_OUTPUT"
-        else
-          echo "comment=false" >> "$GITHUB_OUTPUT"
+        checks=false comment=false
+        allowed PATCH check-runs/0 && checks=true
+        # Never comment without the check: a read-only token gets neither.
+        if [ "$checks" = true ] && [ -n "$PR" ] && allowed DELETE "issues/$PR/labels/test-report-permission-probe"; then
+          comment=true
         fi
+        echo "checks=$checks" >> "$GITHUB_OUTPUT"
+        echo "comment=$comment" >> "$GITHUB_OUTPUT"
 
     - name: Publish the report
       if: steps.count.outputs.tests > 0

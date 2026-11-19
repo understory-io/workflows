@@ -4,14 +4,19 @@ Feeds the test-report action: the counts decide whether there is anything to
 publish, and the slowest tests go into the job summary, which the JUnit
 reporter it uses does not cover.
 
-Usage: report.py <patterns> <slowest.md>
-  patterns    newline-separated globs (`**` allowed)
-  slowest.md  where to write the markdown table
+Usage: report.py <patterns> <slowest.md> [go-module-dir]
+  patterns       newline-separated globs (`**` allowed)
+  slowest.md     where to write the markdown table
+  go-module-dir  Go module the tests belong to; when given, each failure gets
+                 the file and line of the `_test.go` line it reports, so its
+                 annotation lands on that line instead of on a path made up
+                 from the package name
 Writes files, tests, failed and skipped to $GITHUB_OUTPUT.
 """
 
 import glob
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -37,18 +42,49 @@ def cell(text):
     return "`" + text.replace("`", "'").replace("|", "\\|").replace("\n", " ") + "`"
 
 
+def locate_go_failures(tree, module_dir):
+    with open(os.path.join(module_dir, "go.mod"), encoding="utf-8") as mod:
+        module = next(line.split()[1] for line in mod if line.startswith("module "))
+    changed = False
+    for case in tree.iter("testcase"):
+        failure = case.find("failure")
+        if failure is None:
+            failure = case.find("error")
+        package = case.get("classname", "")
+        if failure is None or case.get("file") or not (package + "/").startswith(module + "/"):
+            continue
+        # The last one: logs come before the failure, and t.Fatal ends the test.
+        matches = re.findall(r"([\w.-]+_test\.go):(\d+):", failure.text or "")
+        if not matches:
+            continue
+        name, line = matches[-1]
+        path = os.path.normpath(os.path.join(module_dir, package[len(module):].lstrip("/"), name))
+        if os.path.isfile(path):
+            case.set("file", path)
+            case.set("line", line)
+            changed = True
+    return changed
+
+
 def main():
     patterns, slowest_path = sys.argv[1], sys.argv[2]
+    go_module_dir = sys.argv[3] if len(sys.argv) > 3 else ""
     files = sorted({f for p in patterns.splitlines() if p.strip() for f in glob.glob(p.strip(), recursive=True)})
 
     cases = []
     for path in files:
         try:
-            root = ET.parse(path).getroot()
+            tree = ET.parse(path)
         except (ET.ParseError, OSError) as err:
             print(f"::warning::skipping {path}, which is not readable JUnit: {err}")
             continue
-        for case in root.iter("testcase"):
+        if go_module_dir:
+            try:
+                if locate_go_failures(tree, go_module_dir):
+                    tree.write(path, encoding="UTF-8", xml_declaration=True)
+            except (OSError, StopIteration) as err:
+                print(f"::warning::could not place failures in {go_module_dir}: {err}")
+        for case in tree.iter("testcase"):
             if case.find("failure") is not None or case.find("error") is not None:
                 status = "failed"
             elif case.find("skipped") is not None:

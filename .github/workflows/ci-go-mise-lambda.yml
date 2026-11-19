@@ -84,19 +84,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # The test-report action at this workflow's own commit, so a caller gets the
-      # action that matches the workflow it pinned. Fetched before the private-module
-      # rewrite below, which would otherwise apply to this clone.
-      - name: Checkout the test-report action
-        continue-on-error: true
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
-          ref: ${{ job.workflow_sha || 'main' }}
-          path: .understory-workflows
-          sparse-checkout: .github/actions/test-report
-          persist-credentials: false
-
       # Started first so the download overlaps Go setup and the cache restore. ECR
       # Public mirrors Docker Hub's images without its anonymous pull limits; it is
       # tagged back to the requested name, which mise.toml's local:up runs.
@@ -192,7 +179,7 @@ jobs:
           # exits, which is most of the run time of a service with many packages.
           GORACE: "atexit_sleep_ms=0"
 
-      # Reporting never decides the build: both steps continue on error, and they
+      # Reporting never decides the build: these steps continue on error, and they
       # run after failed tests, which is when the report matters most.
       - name: Convert test output to JUnit
         id: junit
@@ -206,12 +193,28 @@ jobs:
           "$RUNNER_TEMP/bin/go-junit-report" -in "$RUNNER_TEMP/go-test.log" -out "$RUNNER_TEMP/test-results/go-test.xml"
           echo "path=$RUNNER_TEMP/test-results/go-test.xml" >> "$GITHUB_OUTPUT"
 
+      # The action at this workflow's own commit, so a caller gets the one matching
+      # the workflow it pinned, and a failed fetch fails this step, not the job's
+      # setup as an unresolvable `uses: …@main` would. Fetched only now so the
+      # tests never see the extra directory.
+      - name: Checkout the test-report action
+        if: always() && steps.junit.outputs.path != ''
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: .github/actions/test-report
+          persist-credentials: false
+
       - name: Report test results
         if: always() && steps.junit.outputs.path != ''
         continue-on-error: true
         uses: ./.understory-workflows/.github/actions/test-report
         with:
           junit-path: ${{ steps.junit.outputs.path }}
+          go-module-dir: ${{ inputs.app_dir }}
           title: Go tests (${{ inputs.app_name }})
           artifact-name: test-results-${{ inputs.app_name }}
 

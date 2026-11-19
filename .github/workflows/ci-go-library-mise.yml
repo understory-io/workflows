@@ -28,18 +28,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # See ci-go-mise-lambda.yml: the test-report action at this workflow's commit,
-      # fetched before the private-module rewrite.
-      - name: Checkout the test-report action
-        continue-on-error: true
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
-          ref: ${{ job.workflow_sha || 'main' }}
-          path: .understory-workflows
-          sparse-checkout: .github/actions/test-report
-          persist-credentials: false
-
       # Runner images ship an older baked-in Go than what mise.toml/go.mod
       # pin. mise resolves go:-backend tool versions (e.g. sprt) by shelling
       # out to `go list -m`, which enforces the current module's go.mod floor
@@ -125,12 +113,25 @@ jobs:
           "$RUNNER_TEMP/bin/go-junit-report" -in "$RUNNER_TEMP/go-test.log" -out "$RUNNER_TEMP/test-results/go-test.xml"
           echo "path=$RUNNER_TEMP/test-results/go-test.xml" >> "$GITHUB_OUTPUT"
 
+      # See ci-go-mise-lambda.yml for why the action is checked out here.
+      - name: Checkout the test-report action
+        if: always() && steps.junit.outputs.path != ''
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository || 'understory-io/workflows' }}
+          ref: ${{ job.workflow_sha || 'main' }}
+          path: .understory-workflows
+          sparse-checkout: .github/actions/test-report
+          persist-credentials: false
+
       - name: Report test results
         if: always() && steps.junit.outputs.path != ''
         continue-on-error: true
         uses: ./.understory-workflows/.github/actions/test-report
         with:
           junit-path: ${{ steps.junit.outputs.path }}
+          go-module-dir: .
           title: Go tests
 
       - name: Build module
