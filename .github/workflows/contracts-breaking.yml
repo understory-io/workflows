@@ -278,9 +278,9 @@ jobs:
               echo
             fi
             cat "$details"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
-          verdict() { echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          verdict() { echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"; }
           if [ "$errors" -gt 0 ]; then
             verdict "❌ **Could not complete the check.** Fix the failure above. The \`${APPROVAL_LABEL}\` label does not cover it."
             exit 1
