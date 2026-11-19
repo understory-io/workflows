@@ -42,6 +42,9 @@ class Collector(http.server.BaseHTTPRequestHandler):
             # report.py's check and comment: denied, as for a token without the permission.
             return self.do_GET()
         Collector.requests.append((self.path, dict(self.headers), json.loads(gzip.decompress(body))))
+        if Collector.status is None:
+            self.wfile.write(b"garbage\r\n\r\n")
+            return
         self.send_response(Collector.status)
         self.end_headers()
 
@@ -78,6 +81,22 @@ class Endpoint(unittest.TestCase):
     def test_headers_are_split_and_url_decoded(self):
         self.assertEqual(otlp.parse_headers("Authorization=Bearer%20abc, Dash0-Dataset=default,junk"),
                          {"Authorization": "Bearer abc", "Dash0-Dataset": "default"})
+
+
+class Cap(unittest.TestCase):
+    def test_failures_always_go_and_passing_tests_stop_at_the_cap(self):
+        case = {"package": "p", "secs": 0.1, "file": "", "line": ""}
+        cases = ([{**case, "name": f"f{i}", "status": "failed"} for i in range(3)]
+                 + [{**case, "name": f"p{i}", "status": "passed"} for i in range(10)])
+        old, otlp.MAX_TESTS = otlp.MAX_TESTS, 5
+        try:
+            _, spans, left_out = otlp.spans({"title": "T", "cases": cases}, 10**18)
+        finally:
+            otlp.MAX_TESTS = old
+        names = [s["name"] for s in spans[1:]]
+        self.assertEqual(len(names), 5)
+        self.assertTrue(all(f"p › f{i}" in names for i in range(3)))
+        self.assertEqual(left_out, 8)
 
 
 class Export(unittest.TestCase):
@@ -172,6 +191,19 @@ class Export(unittest.TestCase):
         run = self.send(self.report(), f"http://127.0.0.1:{self.server.server_port}")
         self.assertIn("::warning::Dash0: could not send the test results (HTTP 401)", run.stdout)
         self.assertNotIn("secret-token", run.stdout + run.stderr + self.summary_text())
+
+    def test_headers_with_a_line_break_are_refused_without_their_value(self):
+        run = self.send(self.report(), f"http://127.0.0.1:{self.server.server_port}",
+                        headers="Authorization=Bearer secret-token\nDash0-Dataset=default")
+        self.assertEqual(Collector.requests, [])
+        self.assertIn("line break", run.stdout)
+        self.assertNotIn("secret-token", run.stdout + run.stderr + self.summary_text())
+
+    def test_a_broken_response_warns(self):
+        Collector.status = None
+        run = self.send(self.report(), f"http://127.0.0.1:{self.server.server_port}")
+        self.assertIn("::warning::Dash0: could not send the test results (", run.stdout)
+        self.assertEqual(run.stderr, "")
 
     def test_an_unreachable_endpoint_warns(self):
         run = self.send(self.report(), "http://127.0.0.1:1")

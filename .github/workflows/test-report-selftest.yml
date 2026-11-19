@@ -1,21 +1,22 @@
 name: "test-report self-test"
 
-# Runs report.py and otlp.py against a local OTLP server, so a change can't
-# quietly stop the Dash0 export or leak test output or the headers into it.
+# Runs report.py and otlp.py against a local OTLP server, and the action itself
+# as a caller would, so a change can't quietly stop the Dash0 export or leak
+# test output or the headers into it.
 
 on:
   pull_request:
     paths:
       - ".github/actions/test-report/**"
       - ".github/workflows/test-report-selftest.yml"
-      - "test/test_otlp.py"
+      - "test/**"
   push:
     branches:
       - main
     paths:
       - ".github/actions/test-report/**"
       - ".github/workflows/test-report-selftest.yml"
-      - "test/test_otlp.py"
+      - "test/**"
 
 permissions:
   contents: read
@@ -31,3 +32,46 @@ jobs:
 
       - name: Run the tests
         run: python3 -m unittest discover -s test -p 'test_otlp.py' -v
+
+  action:
+    name: "Action"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # No checks or pull-requests permission: the report's check and comment
+    # get a 403, which it notes and moves on from.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Start a local OTLP collector
+        run: |
+          python3 test/otlp_collector.py 4318 "$RUNNER_TEMP/otlp.jsonl" &
+          sleep 1
+
+      - name: Report the fixture
+        id: report
+        uses: ./.github/actions/test-report
+        with:
+          junit-path: test/fixtures/junit.xml
+          title: test-report self-test
+          artifact-name: selftest-results
+          test-outcome: failure
+          otlp-endpoint: http://127.0.0.1:4318
+          otlp-headers: Authorization=Bearer%20fixture-token,Dash0-Dataset=default
+
+      - name: Check the collector got one trace with a span per test
+        run: |
+          python3 - "$RUNNER_TEMP/otlp.jsonl" <<'PY'
+          import json, sys
+          [request] = [json.loads(line) for line in open(sys.argv[1])]
+          assert request["path"] == "/v1/traces", request["path"]
+          assert request["authorization"] == "Bearer fixture-token"
+          [rs] = request["body"]["resourceSpans"]
+          resource = {a["key"]: a["value"] for a in rs["resource"]["attributes"]}
+          assert resource["test.suite"] == {"stringValue": "test-report self-test"}, resource
+          root, *tests = rs["scopeSpans"][0]["spans"]
+          outcomes = sorted(next(a["value"]["stringValue"] for a in s["attributes"] if a["key"] == "test.outcome") for s in tests)
+          assert outcomes == ["expected", "skipped", "unexpected"], outcomes
+          assert "expected 1" not in json.dumps(request["body"]), "test output was sent"
+          print("ok:", len(tests), "test spans")
+          PY

@@ -12,6 +12,7 @@ no start times, so each test span ends when the report runs.
 """
 
 import gzip
+import http.client
 import json
 import os
 import secrets
@@ -34,8 +35,8 @@ env = os.environ.get
 
 def traces_url(value):
     """The OTLP/HTTP traces URL. Takes Dash0's HTTP endpoint or its gRPC one
-    (`ingress.<region>.aws.dash0.com:4317`), as the org-level secret holds
-    only that: both are the same host, with OTLP/HTTP on 443."""
+    (`ingress.<region>.aws.dash0.com:4317`), which callers pass as
+    `DASH0_OTLP_ENDPOINT_GRPC`: both are the same host, with OTLP/HTTP on 443."""
     value = value.strip()
     url = urllib.parse.urlsplit(value if "://" in value else f"grpc://{value}")
     if url.scheme == "grpc" or url.port == 4317:
@@ -47,13 +48,23 @@ def traces_url(value):
 
 
 def parse_headers(value):
-    """`OTEL_EXPORTER_OTLP_HEADERS` format: comma-separated `key=value`, values URL-encoded."""
+    """`OTEL_EXPORTER_OTLP_HEADERS` format: comma-separated `key=value`, values
+    URL-encoded. A line break is refused here, as http.client's own refusal
+    quotes the value, and the runner masks only the secret's whole lines."""
     headers = {}
     for pair in value.split(","):
         key, sep, val = pair.partition("=")
         if sep and key.strip():
             headers[key.strip()] = urllib.parse.unquote(val.strip())
+    if any(c in k + v for k, v in headers.items() for c in "\r\n"):
+        raise ours(ValueError("the headers hold a line break; separate them with commas"))
     return headers
+
+
+def ours(err):
+    """Marks an error this script raised, whose text is safe to show."""
+    err.ours = True
+    return err
 
 
 def attribute(key, value):
@@ -169,7 +180,7 @@ def export(results, url, headers):
     for i in range(0, len(all_spans), BATCH):
         remaining = deadline - time.monotonic()
         if remaining <= 1:
-            raise TimeoutError(f"stopped after {i} of {len(all_spans)} spans, at the {DEADLINE_SECS}s limit")
+            raise ours(TimeoutError(f"stopped after {i} of {len(all_spans)} spans, at the {DEADLINE_SECS}s limit"))
         post(url, headers, {"resourceSpans": [{
             "resource": res,
             "scopeSpans": [{"scope": {"name": SCOPE}, "spans": all_spans[i:i + BATCH]}],
@@ -189,11 +200,18 @@ def main():
             line = f"Dash0: sent {sent} test results, trace `{trace_id}`."
             if left_out:
                 line += f" {left_out} passing tests over the {MAX_TESTS} limit were left out."
-        except (urllib.error.URLError, OSError, ValueError, KeyError, TimeoutError) as err:
-            # HTTPError's text is the status line; the request headers never reach it.
-            reason = f"HTTP {err.code}" if isinstance(err, urllib.error.HTTPError) else type(err).__name__
-            detail = "" if isinstance(err, urllib.error.HTTPError) else f": {getattr(err, 'reason', err)}"
-            line = f"Dash0: could not send the test results ({reason}{detail})."
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError, KeyError) as err:
+            # Only texts that can't carry a header value: the status code, a
+            # connection error's reason, or this script's own messages.
+            if isinstance(err, urllib.error.HTTPError):
+                reason = f"HTTP {err.code}"
+            elif isinstance(err, urllib.error.URLError):
+                reason = f"{type(err.reason).__name__}: {err.reason}"
+            elif getattr(err, "ours", False):
+                reason = str(err)
+            else:
+                reason = type(err).__name__
+            line = f"Dash0: could not send the test results ({reason})."
             print(f"::warning::{line}")
     with open(env("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as out:
         out.write(f"{line}\n")
