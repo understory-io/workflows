@@ -1,28 +1,21 @@
 name: "tests-passed self-test"
 
 # Runs the gate's script against a mocked checks API, so a change to how it
-# reads results can't quietly turn the gate green on failures.
+# reads results can't quietly turn the gate green on failures. No paths
+# filter, so its check reports on every PR and a ruleset can require it.
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/tests-passed.yml"
-      - ".github/workflows/tests-passed-selftest.yml"
-      - "test/tests-passed.mjs"
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/tests-passed.yml"
-      - ".github/workflows/tests-passed-selftest.yml"
-      - "test/tests-passed.mjs"
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: "Test"
+  tests-passed-selftest:
+    name: "tests-passed-selftest"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

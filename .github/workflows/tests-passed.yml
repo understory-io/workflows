@@ -7,6 +7,10 @@ name: tests-passed
 # neutral or skipped; red when anything failed, was cancelled, timed out or
 # needs action.
 #
+# GitHub Copilot code review doesn't count unless `count_copilot_review`: it
+# is an advisory review, not a test, and its run failed on every PR it
+# reviewed in Nov 2026.
+#
 # Call it from a workflow of its own (template in README.md). It leaves out
 # every check run of the workflow that calls it, so its own earlier runs,
 # cancelled by `concurrency`, don't count against it; any other job put in
@@ -41,6 +45,13 @@ on:
         type: number
         required: false
         default: 30
+      count_copilot_review:
+        description: >-
+          Count GitHub Copilot code review (the dynamic workflow
+          "dynamic/agents/copilot-pull-request-reviewer") like any other check
+        type: boolean
+        required: false
+        default: false
       sha:
         description: "Commit to check; defaults to the PR head commit"
         type: string
@@ -70,6 +81,7 @@ jobs:
           TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           SETTLE_SECONDS: ${{ inputs.settle_seconds }}
           POLL_SECONDS: ${{ inputs.poll_seconds }}
+          COUNT_COPILOT_REVIEW: ${{ inputs.count_copilot_review }}
           SHA: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
         with:
           retries: 3
@@ -88,6 +100,13 @@ jobs:
               return (name) => name === line || (re !== null && re.test(name));
             });
             const ignored = (...names) => names.some((n) => ignore.some((match) => match(n)));
+
+            // Copilot code review is a GitHub-owned "dynamic" workflow. Match its
+            // event and path, which no repo workflow can have, not its name or
+            // the event alone: CodeQL default setup, Dependabot and other
+            // dynamic runs still count.
+            const countCopilotReview = process.env.COUNT_COPILOT_REVIEW === 'true';
+            const isCopilotReview = (run) => !countCopilotReview && run?.event === 'dynamic' && run.path === 'dynamic/agents/copilot-pull-request-reviewer';
 
             const PASS = new Set(['success', 'neutral', 'skipped']);
 
@@ -138,7 +157,8 @@ jobs:
               for (const { cr, run } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
                 const done = cr.status === 'completed';
-                const state = ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
+                const copilot = isCopilotReview(run) && cr.app?.slug === 'github-actions';
+                const state = copilot || ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
                 if (run) runsWithChecks.add(run.id);
                 // An ignored failure explains its run's failure too.
                 if (run && done && !PASS.has(cr.conclusion)) runsWithFailures.add(run.id);
@@ -163,7 +183,7 @@ jobs:
                   id: `run:${run.id}`,
                   name,
                   result: done ? run.conclusion : run.status,
-                  state: ignored(run.name, name) ? 'ignored' : done ? 'fail' : 'pending',
+                  state: isCopilotReview(run) || ignored(run.name, name) ? 'ignored' : done ? 'fail' : 'pending',
                   url: run.html_url,
                 });
               }
@@ -235,12 +255,17 @@ jobs:
             const failed = rows.filter((r) => r.state === 'fail');
             const pending = rows.filter((r) => r.state === 'pending');
             const counted = rows.filter((r) => r.state !== 'ignored');
+            // A re-run of another check doesn't start this gate again, but a gate
+            // started while that re-run is queued waits for it.
+            const retry = failed.length
+              ? 'After re-running the failed check, re-run this job (tests-passed) too.'
+              : timedOut ? 'Once they finish, re-run this job (tests-passed).' : '';
 
             const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
             const icon = { fail: '❌', pending: '⏳', pass: '✅', ignored: '➖' };
             await core.summary
               .addHeading('tests-passed', 2)
-              .addRaw(`Commit <code>${esc(sha)}</code>: ${counted.length} checks, ${failed.length} not passed, ${pending.length} still running.`, true)
+              .addRaw(`Commit <code>${esc(sha)}</code>: ${counted.length} checks, ${failed.length} not passed, ${pending.length} still running.${retry ? ` <b>${retry}</b>` : ''}`, true)
               .addTable([
                 [{ data: 'Check', header: true }, { data: 'Result', header: true }],
                 ...rows.map((r) => [
@@ -253,9 +278,9 @@ jobs:
             for (const r of failed) core.error(`${r.name}: ${r.result} ${r.url ?? ''}`.trim());
             if (counted.length === 0) core.notice('no other check reported on this commit');
             if (timedOut) {
-              core.setFailed(`timed out after ${process.env.TIMEOUT_MINUTES} min; still running: ${list(pending)}` + (failed.length ? `; not passed: ${list(failed)}` : ''));
+              core.setFailed(`timed out after ${process.env.TIMEOUT_MINUTES} min; still running: ${list(pending)}` + (failed.length ? `; not passed: ${list(failed)}` : '') + `. ${retry}`);
             } else if (failed.length) {
-              core.setFailed(`${failed.length} of ${counted.length} checks did not pass: ${list(failed)}`);
+              core.setFailed(`${failed.length} of ${counted.length} checks did not pass: ${list(failed)}. ${retry}`);
             } else {
               core.info(`all ${counted.length} checks passed`);
             }
