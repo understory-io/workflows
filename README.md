@@ -124,6 +124,8 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 - **`ai-review`** - An AI reviewer comments on every PR: invariants, existing data, blast radius, proving tests (see below)
 - **`poeditor-check`** - Validate translations
 - **`crowdin-pull-translations`** - Pull Crowdin translations and open a PR
+- **`notifications-knock-translations`** - Check, preview and ship a go-notifications service's Knock translations (see below)
+- **`notifications-crowdin-pull-translations`** - `crowdin-pull-translations` for go-notifications services: the PR also carries the regenerated Knock translations
 
 #### Release Management
 
@@ -243,3 +245,60 @@ Additional secrets for specific workflows:
 3. Test thoroughly (changes affect many repos!)
 4. Update documentation
 5. Submit a PR
+
+### Notification translations (go-notifications)
+
+A Go service that sends notifications with `unotifications.Copy` keeps, under its directory:
+`i18n/extracted/notifications.json` (the Crowdin source), `i18n/generated/<locale>/translations.json` (Crowdin's translations),
+`.knock/translations/<lang>/<namespace>.<lang>.json` (committed Knock translations) and `knock.json` (`{"knockDir": ".knock"}`).
+The developer regenerates the first and the Knock files with the go-notifications tools and commits them.
+
+```yaml
+# .github/workflows/<service>-knock-translations.yml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths: ["apps/my-service/**/*.go", "apps/my-service/go.mod", "apps/my-service/i18n/**",
+            "apps/my-service/.knock/translations/**", "apps/my-service/knock.json"]
+    branches: [main]
+  push:
+    paths: ["apps/my-service/.knock/translations/**", "apps/my-service/knock.json"]
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  knock:
+    uses: understory-io/workflows/.github/workflows/notifications-knock-translations.yml@main
+    with:
+      app-dir: apps/my-service
+      namespace: my-service
+      regenerate-command: go generate ./internal/notification
+    secrets:
+      knock-service-token: ${{ secrets.KNOCK_SERVICE_TOKEN }}
+      go-private-modules-pat: ${{ secrets.GO_PRIVATE_MODULES_PAT }}
+```
+
+```yaml
+# .github/workflows/crowdin-pull-translations.yml, started by crowdin-sync
+on:
+  repository_dispatch:
+    types: [sync-translations]
+  workflow_dispatch:
+concurrency:
+  group: crowdin-translations
+  cancel-in-progress: true
+jobs:
+  pull-translations:
+    uses: understory-io/workflows/.github/workflows/notifications-crowdin-pull-translations.yml@main
+    with:
+      apps: |
+        apps/my-service my-service
+    secrets:
+      crowdin-project-id: ${{ secrets.CROWDIN_PROJECT_ID }}
+      crowdin-token: ${{ secrets.CROWDIN_API_TOKEN }}
+      pr-token: ${{ secrets.CROWDIN_TRANSLATIONS_PR }}
+      go-private-modules-pat: ${{ secrets.GO_PRIVATE_MODULES_PAT }}
+```
+
+A pull request's Knock files are previewed on the Knock branch `<repo>-pr-<number>`, deleted when it closes. A push to main
+pushes them to development and promotes exactly that commit to production. Require the `preview` check so stale Knock files
+cannot merge.

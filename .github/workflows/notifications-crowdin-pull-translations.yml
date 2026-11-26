@@ -1,0 +1,147 @@
+name: Notifications Crowdin Pull Translations
+
+# crowdin-pull-translations.yml for repositories with go-notifications services:
+# besides Crowdin's translations, the pull request carries the Knock
+# translations regenerated from them, so it passes the services' checks and
+# merges itself, and the merge pushes the new languages to Knock
+# (notifications-knock-translations.yml).
+
+on:
+  workflow_call:
+    inputs:
+      apps:
+        description: |
+          One service per line, "<app-dir> <namespace>", e.g.
+          "apps/bookings-core bookings". Each keeps Crowdin's translations in
+          <app-dir>/i18n/generated/<locale>/translations.json.
+        type: string
+        required: true
+      base:
+        description: 'Branch the translations PR targets, and the branch it is cut from. The head branch is named l10n_<base>.'
+        type: string
+        default: 'main'
+      crowdin-download-flags:
+        description: 'Additional flags for crowdin download command (e.g., --branch main)'
+        type: string
+        default: ''
+      timeout_minutes:
+        description: "Max minutes before the job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 10
+    secrets:
+      crowdin-project-id:
+        required: true
+      crowdin-token:
+        required: true
+      pr-token:
+        # A pull request opened with this token, unlike GITHUB_TOKEN, starts
+        # the checks, so it can merge itself and its merge runs the Knock sync.
+        required: true
+      go-private-modules-pat:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pull-translations:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.base }}
+          fetch-depth: 0
+          token: ${{ secrets.pr-token }}
+
+      - name: Download translations from Crowdin
+        run: |
+          npm install -g @crowdin/cli
+          crowdin download ${{ inputs.crowdin-download-flags }}
+        env:
+          CROWDIN_PROJECT_ID: ${{ secrets.crowdin-project-id }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.crowdin-token }}
+          CROWDIN_API_TOKEN: ${{ secrets.crowdin-token }}
+
+      # Crowdin returns react-intl {defaultMessage} objects; the Knock
+      # converter reads plain strings.
+      - name: Flatten translation files
+        env:
+          APPS: ${{ inputs.apps }}
+        run: |
+          while read -r dir namespace; do
+            [ -n "$dir" ] || continue
+            [ -d "$dir/i18n/generated" ] || continue
+            find "$dir/i18n/generated" -name translations.json -print0 \
+              | xargs -0 -r perl -0777 -i -pe 's/\{\s*"defaultMessage":\s*("(?:[^"\\]|\\.)*")(?:,\s*"description"\s*:\s*"(?:[^"\\]|\\.)*")?\s*\}/$1/gm'
+          done <<< "$APPS"
+
+      # Only a recent Go to start from: GOTOOLCHAIN=auto below fetches the
+      # version each service's go.mod asks for.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Configure access to private Go modules
+        env:
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.go-private-modules-pat }}
+        run: |
+          git config --global \
+            url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
+            "https://github.com/understory-io"
+          echo "GOPRIVATE=github.com/understory-io/*" >> "$GITHUB_ENV"
+          echo "GONOSUMDB=github.com/understory-io/*" >> "$GITHUB_ENV"
+
+      # Each service converts with the go-notifications version in its own
+      # go.mod, the one its pull request check uses.
+      - name: Regenerate the Knock translations
+        env:
+          APPS: ${{ inputs.apps }}
+          GOTOOLCHAIN: auto
+        run: |
+          while read -r dir namespace; do
+            [ -n "$dir" ] || continue
+            [ -n "$namespace" ] || { echo "::error::apps line \"$dir\" has no namespace"; exit 1; }
+            (cd "$dir" && go run github.com/understory-io/go-notifications/cmd/notifications-knock \
+              -namespace "$namespace" -source i18n/extracted/notifications.json \
+              -translations i18n/generated -out .knock)
+          done <<< "$APPS"
+
+      - name: Commit and push translations
+        id: commit
+        env:
+          BASE: ${{ inputs.base }}
+          APPS: ${{ inputs.apps }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          head="l10n_$BASE"
+          git switch -C "$head"
+          while read -r dir namespace; do
+            [ -n "$dir" ] || continue
+            git add -- "$dir/i18n/generated" "$dir/.knock/translations"
+          done <<< "$APPS"
+          if git diff --staged --quiet; then
+            echo "No translation changes compared to $BASE."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore: sync translations from Crowdin"
+            git push --force origin "$head"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update pull request
+        if: steps.commit.outputs.has_changes == 'true'
+        run: |
+          gh pr create \
+            --base "$BASE" \
+            --head "l10n_$BASE" \
+            --title "New Crowdin translations" \
+            --body "Automated translations sync from Crowdin, with the Knock translations regenerated from them." \
+          || echo "PR already exists"
+          gh pr merge "l10n_$BASE" --auto --squash
+        env:
+          BASE: ${{ inputs.base }}
+          GITHUB_TOKEN: ${{ secrets.pr-token }}
