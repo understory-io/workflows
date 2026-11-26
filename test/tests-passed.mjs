@@ -147,6 +147,22 @@ expect('R6 a repo workflow named like Copilot code review still counts', /Runnin
 r = await run('R7', () => ({ runs: [...self, build()[0], copilot()], checks: [...selfChecks, build()[1], copilotCheck()] }), { COUNT_COPILOT_REVIEW: 'true' });
 expect('R7 count_copilot_review makes Copilot code review count', /^1 of 2 checks did not pass: Running Copilot Code Review \/ copilot-pull-request-reviewer \(failure\)/.test(r.failed ?? ''), r);
 
+r = await run('R8', () => ({ runs: [...self, copilot()], checks: [...selfChecks, copilotCheck(), cr(42, 'Go tests (api)', 80, 'completed', 'failure')] }));
+expect('R8 another check run in the Copilot check suite still counts', /^1 of 1 checks did not pass: Running Copilot Code Review \/ Go tests \(api\) \(failure\)/.test(r.failed ?? ''), r);
+
+r = await run('R9', () => ({ runs: [...self, dyn(9, 302, 90, 'dynamic/copilot-swe-agent/copilot', 'Running Copilot coding agent', { conclusion: 'failure' })], checks: [...selfChecks, cr(41, 'copilot', 90, 'completed', 'failure')] }));
+expect('R9 a failed Copilot coding agent run still counts', /Running Copilot coding agent \/ copilot \(failure\)/.test(r.failed ?? ''), r);
+r = await run('R9b', () => ({ runs: [...self, dyn(9, 302, 90, 'dynamic/copilot-swe-agent/copilot', 'Running Copilot coding agent', { conclusion: 'startup_failure' })], checks: selfChecks }));
+expect('R9b a Copilot coding agent run that failed without a check still counts', /Running Copilot coding agent \(workflow\) \(startup_failure\)/.test(r.failed ?? ''), r);
+
+{
+  // The scenarios set COUNT_COPILOT_REVIEW themselves; this proves the workflow passes the input on.
+  const yml = wf.join('\n');
+  const ok = /count_copilot_review:\n\s+description: [^\n]*\n(?:\s{10}[^\n]*\n)*\s+type: boolean\n\s+required: false\n\s+default: false\n/.test(yml) && yml.includes('COUNT_COPILOT_REVIEW: ${{ inputs.count_copilot_review }}');
+  console.log(`${ok ? 'ok  ' : 'FAIL'} count_copilot_review is a boolean input, off by default, passed to the script`);
+  if (!ok) fails++;
+}
+
 r = await run('S', (p) => ({ runs: [...self, wrun(5, 1, 50, p < 3 ? { run_attempt: 2, status: 'queued', conclusion: null } : { run_attempt: 2 })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, p < 3 ? 'queued' : 'completed', p < 3 ? null : 'success')] }));
 expect('S gate re-run while a check re-run is queued waits for it', r.failed === null && r.polls >= 5, r);
 

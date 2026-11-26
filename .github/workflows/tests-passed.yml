@@ -104,7 +104,9 @@ jobs:
             // Copilot code review is a GitHub-owned "dynamic" workflow. Match its
             // event and path, which no repo workflow can have, not its name or
             // the event alone: CodeQL default setup, Dependabot and other
-            // dynamic runs still count.
+            // dynamic runs still count. Its check is matched by name too, since
+            // a check run made with GITHUB_TOKEN (a test reporter) can land in
+            // any Actions check suite on the commit, Copilot's included.
             const countCopilotReview = process.env.COUNT_COPILOT_REVIEW === 'true';
             const isCopilotReview = (run) => !countCopilotReview && run?.event === 'dynamic' && run.path === 'dynamic/agents/copilot-pull-request-reviewer';
 
@@ -157,7 +159,7 @@ jobs:
               for (const { cr, run } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
                 const done = cr.status === 'completed';
-                const copilot = isCopilotReview(run) && cr.app?.slug === 'github-actions';
+                const copilot = isCopilotReview(run) && cr.name === 'copilot-pull-request-reviewer';
                 const state = copilot || ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
                 if (run) runsWithChecks.add(run.id);
                 // An ignored failure explains its run's failure too.
@@ -256,7 +258,7 @@ jobs:
             const pending = rows.filter((r) => r.state === 'pending');
             const counted = rows.filter((r) => r.state !== 'ignored');
             // A re-run of another check doesn't start this gate again, but a gate
-            // started while that re-run is queued waits for it.
+            // started once that re-run's jobs are queued waits for them.
             const retry = failed.length
               ? 'After re-running the failed check, re-run this job (tests-passed) too.'
               : timedOut ? 'Once they finish, re-run this job (tests-passed).' : '';
