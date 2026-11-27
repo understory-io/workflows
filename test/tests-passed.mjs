@@ -171,6 +171,40 @@ expect('R9b a Copilot coding agent run that failed without a check still counts'
   if (!ok) fails++;
 }
 
+// GitHub left this job's check run at in_progress with its result written
+// (storefront check run 140264796184 on PR 1898, Nov 2026); its run completed.
+const stuckCheck = (id, name, suite, conclusion, extra = {}) => cr(id, name, suite, 'in_progress', conclusion, { completed_at: '2026-11-27T01:54:22Z', ...extra });
+const rowOf = (t, name) => t?.slice(1).find((row) => row[0].includes(`>${name}<`));
+
+r = await run('T1', () => ({ runs: [...self, wrun(5, 1, 50)], checks: [...selfChecks, cr(10, 'ci', 50, 'completed', 'success'), stuckCheck(11, 'fungus codegen drift', 50, 'success')] }), { TIMEOUT_MINUTES: '10' });
+expect('T1 a check run stuck at in_progress with conclusion success passes, without waiting', r.failed === null && r.elapsed < 120, r);
+expect('T1 the summary and a notice say GitHub still reports in_progress', /success \(GitHub still reports in_progress\)$/.test(rowOf(r.table, 'wf1 / fungus codegen drift')?.[1] ?? '') && r.notices.some((n) => n.startsWith('wf1 / fungus codegen drift: success (GitHub still reports in_progress)')), r);
+
+r = await run('T2', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' })], checks: [...selfChecks, stuckCheck(10, 'build', 50, 'failure')] }), { TIMEOUT_MINUTES: '10' });
+expect('T2 a check run stuck at in_progress with conclusion failure fails, without waiting', /^1 of 1 checks did not pass: wf1 \/ build \(failure\)\./.test(r.failed ?? '') && r.elapsed < 120, r);
+expect('T2 its error says GitHub still reports in_progress', r.errors.some((e) => e.startsWith('wf1 / build: failure (GitHub still reports in_progress)')), r);
+
+r = await run('T3', () => ({ runs: [...self, wrun(5, 1, 50, { status: 'in_progress', conclusion: null })], checks: [...selfChecks, cr(10, 'build', 50, 'in_progress', null, { completed_at: null })] }), { TIMEOUT_MINUTES: '5' });
+expect('T3 in_progress with conclusion null stays pending until the timeout', /^timed out after 5 min; still running: wf1 \/ build \(in_progress\)/.test(r.failed ?? ''), r);
+
+r = await run('T4', () => ({ runs: [...self, wrun(5, 1, 50, { status: 'in_progress', conclusion: null })], checks: [...selfChecks, stuckCheck(10, 'build', 50, 'success', { completed_at: null })] }), { TIMEOUT_MINUTES: '5' });
+expect('T4 a conclusion without completed_at is not enough: still pending', /^timed out after 5 min; still running: wf1 \/ build \(in_progress\)/.test(r.failed ?? ''), r);
+
+r = await run('T5', () => ({ runs: [...self, wrun(5, 1, 50, { status: 'in_progress', conclusion: 'success' })], checks: selfChecks }), { TIMEOUT_MINUTES: '5' });
+expect('T5 a workflow run with no check runs counts by its status alone, conclusion or not', /^timed out after 5 min; still running: wf1 \(workflow\) \(in_progress\)/.test(r.failed ?? ''), r);
+
+r = await run('T6', () => ({ runs: [...self, wrun(5, 1, 50, { status: 'in_progress', conclusion: null })], checks: [...selfChecks, stuckCheck(10, 'build', 50, 'success')] }), { TIMEOUT_MINUTES: '5' });
+expect('T6 a stuck check in a run still going waits: a job that needs it may not exist yet', /^timed out after 5 min; still running: wf1 \/ build \(in_progress\)/.test(r.failed ?? ''), r);
+
+r = await run('T7', (p) => ({ runs: [...self, wrun(5, 1, 50, p < 3 ? { status: 'in_progress', conclusion: null } : {})], checks: [...selfChecks, stuckCheck(10, 'build', 50, 'success'), ...(p < 3 ? [] : [cr(11, 'test', 50, 'completed', 'success')])] }));
+expect('T7 it counts once its run completes, and the jobs after it are waited for', r.failed === null && r.polls >= 5 && r.table.length === 3, r);
+
+r = await run('T8', () => ({ runs: self, checks: [...selfChecks, stuckCheck(10, 'Vercel', 555, 'success', { app: { id: 8329 } })] }), { TIMEOUT_MINUTES: '5' });
+expect("T8 another app's check run counts by status alone", /^timed out after 5 min; still running: Vercel \(in_progress\)/.test(r.failed ?? ''), r);
+
+r = await run('T9', () => ({ runs: [...self, wrun(5, 1, 50, { run_attempt: 2, status: 'queued', conclusion: null })], checks: [...selfChecks, stuckCheck(10, 'build', 50, 'success'), cr(12, 'build', 50, 'queued', null)] }), { TIMEOUT_MINUTES: '5' });
+expect("T9 a re-run's queued check run replaces a stuck one of the same name", /^timed out after 5 min; still running: wf1 \/ build \(queued\)/.test(r.failed ?? ''), r);
+
 r = await run('S', (p) => ({ runs: [...self, wrun(5, 1, 50, p < 3 ? { run_attempt: 2, status: 'queued', conclusion: null } : { run_attempt: 2 })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, p < 3 ? 'queued' : 'completed', p < 3 ? null : 'success')] }));
 expect('S gate re-run while a check re-run is queued waits for it', r.failed === null && r.polls >= 5, r);
 

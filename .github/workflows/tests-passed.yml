@@ -158,7 +158,13 @@ jobs:
               const runsWithFailures = new Set();
               for (const { cr, run } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
-                const done = cr.status === 'completed';
+                // GitHub can leave a finished job's check run at in_progress for
+                // good, its conclusion and completed_at written and its workflow
+                // run completed (storefront check run 140264796184, Nov 2026). A
+                // completed run has no job left, so the conclusion stands. While
+                // the run goes on, a job that needs the stuck one may not exist
+                // yet, and other apps may reuse a check run, so both wait on status.
+                const done = cr.status === 'completed' || (run?.status === 'completed' && cr.conclusion != null && cr.completed_at != null);
                 // Only the run's own jobs: a check run made with GITHUB_TOKEN (a
                 // test reporter) can land in any Actions check suite on the
                 // commit, Copilot's included, and links to /runs/<id> instead.
@@ -167,7 +173,8 @@ jobs:
                 if (run) runsWithChecks.add(run.id);
                 // An ignored failure explains its run's failure too.
                 if (run && done && !PASS.has(cr.conclusion)) runsWithFailures.add(run.id);
-                rows.push({ id: `check:${cr.id}`, name, result: done ? cr.conclusion : cr.status, state, url: cr.html_url });
+                const stuck = done && cr.status !== 'completed' ? cr.status : null;
+                rows.push({ id: `check:${cr.id}`, name, result: done ? cr.conclusion : cr.status, stuck, state, url: cr.html_url });
               }
 
               // The newest run of each workflow and event also counts on its
@@ -181,6 +188,8 @@ jobs:
                 if (!newestRun.has(key) || newestRun.get(key).id < run.id) newestRun.set(key, run);
               }
               for (const run of newestRun.values()) {
+                // Status only: a re-run reuses the run, and a run has no
+                // completed_at to confirm a conclusion with.
                 const done = run.status === 'completed';
                 if (done ? PASS.has(run.conclusion) || runsWithFailures.has(run.id) : runsWithChecks.has(run.id)) continue;
                 const name = `${run.name} (workflow)`;
@@ -210,6 +219,7 @@ jobs:
             }
 
             const list = (rows) => rows.map((r) => `${r.name} (${r.result})`).join(', ');
+            const shown = (r) => (r.stuck ? `${r.result} (GitHub still reports ${r.stuck})` : r.result);
             let rows = [];
             let quietSince = null;
             let quietKey = null;
@@ -275,12 +285,13 @@ jobs:
                 [{ data: 'Check', header: true }, { data: 'Result', header: true }],
                 ...rows.map((r) => [
                   r.url ? `<a href="${esc(r.url)}">${esc(r.name)}</a>` : esc(r.name),
-                  `${icon[r.state]} ${esc(r.result)}${r.state === 'ignored' ? ' (ignored)' : ''}`,
+                  `${icon[r.state]} ${esc(shown(r))}${r.state === 'ignored' ? ' (ignored)' : ''}`,
                 ]),
               ])
               .write();
 
-            for (const r of failed) core.error(`${r.name}: ${r.result} ${r.url ?? ''}`.trim());
+            for (const r of failed) core.error(`${r.name}: ${shown(r)} ${r.url ?? ''}`.trim());
+            for (const r of rows) if (r.stuck && r.state === 'pass') core.notice(`${r.name}: ${shown(r)}; counted as finished`);
             if (counted.length === 0) core.notice('no other check reported on this commit');
             if (timedOut) {
               core.setFailed(`timed out after ${process.env.TIMEOUT_MINUTES} min; still running: ${list(pending)}` + (failed.length ? `; not passed: ${list(failed)}` : '') + `. ${retry}`);
