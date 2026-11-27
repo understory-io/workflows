@@ -47,8 +47,8 @@ on:
         default: 30
       count_copilot_review:
         description: >-
-          Count GitHub Copilot code review (the dynamic workflow
-          "dynamic/agents/copilot-pull-request-reviewer") like any other check
+          Count GitHub Copilot code review (the dynamic workflow whose path
+          ends in "/copilot-pull-request-reviewer") like any other check
         type: boolean
         required: false
         default: false
@@ -102,13 +102,13 @@ jobs:
             const ignored = (...names) => names.some((n) => ignore.some((match) => match(n)));
 
             // Copilot code review is a GitHub-owned "dynamic" workflow. Match its
-            // event and path, which no repo workflow can have, not its name or
-            // the event alone: CodeQL default setup, Dependabot and other
-            // dynamic runs still count. Its check is matched by name too, since
-            // a check run made with GITHUB_TOKEN (a test reporter) can land in
-            // any Actions check suite on the commit, Copilot's included.
+            // event and the end of its path, which no repo workflow can have, not
+            // its name or the event alone: CodeQL default setup, Dependabot and
+            // other dynamic runs still count. GitHub has moved the path once
+            // (dynamic/copilot-pull-request-reviewer/... until May 2026, now
+            // dynamic/agents/...) and changed its jobs, so neither is pinned.
             const countCopilotReview = process.env.COUNT_COPILOT_REVIEW === 'true';
-            const isCopilotReview = (run) => !countCopilotReview && run?.event === 'dynamic' && run.path === 'dynamic/agents/copilot-pull-request-reviewer';
+            const isCopilotReview = (run) => !countCopilotReview && run?.event === 'dynamic' && /\/copilot-pull-request-reviewer$/.test(run.path ?? '');
 
             const PASS = new Set(['success', 'neutral', 'skipped']);
 
@@ -159,7 +159,10 @@ jobs:
               for (const { cr, run } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
                 const done = cr.status === 'completed';
-                const copilot = isCopilotReview(run) && cr.name === 'copilot-pull-request-reviewer';
+                // Only the run's own jobs: a check run made with GITHUB_TOKEN (a
+                // test reporter) can land in any Actions check suite on the
+                // commit, Copilot's included, and links to /runs/<id> instead.
+                const copilot = isCopilotReview(run) && (cr.html_url ?? '').includes(`/actions/runs/${run.id}/job/`);
                 const state = copilot || ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
                 if (run) runsWithChecks.add(run.id);
                 // An ignored failure explains its run's failure too.

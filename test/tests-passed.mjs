@@ -123,11 +123,19 @@ r = await run('Q', () => ({ runs: [wrun(1, 99, 999, { status: 'in_progress', con
 expect('Q own check is left out even before its run is listed', r.failed === null, r);
 
 const build = (conclusion = 'success') => [wrun(5, 1, 50, { conclusion }), cr(10, 'build / build', 50, 'completed', conclusion)];
-const copilotCheck = (status = 'completed', conclusion = 'failure') => cr(40, 'copilot-pull-request-reviewer', 80, status, conclusion);
+// Job check runs link to their run's job; a check made through the API links to /runs/<id>.
+const job = (runId, id) => ({ html_url: `https://github.com/o/r/actions/runs/${runId}/job/${id}` });
+const copilotCheck = (status = 'completed', conclusion = 'failure') => cr(40, 'copilot-pull-request-reviewer', 80, status, conclusion, job(8, 40));
 const copilotRow = (t) => t.slice(1).find((row) => row[0].includes('Running Copilot Code Review / copilot-pull-request-reviewer'));
 
 r = await run('R1', () => ({ runs: [...self, build()[0], copilot()], checks: [...selfChecks, build()[1], copilotCheck()] }));
 expect('R1 failed Copilot code review is ignored', r.failed === null && /failure \(ignored\)/.test(copilotRow(r.table)?.[1] ?? ''), r);
+
+r = await run('R1b', () => ({
+  runs: [...self, build()[0], dyn(8, 284823600, 80, 'dynamic/copilot-pull-request-reviewer/copilot-pull-request-reviewer', 'Copilot code review', { conclusion: 'failure' })],
+  checks: [...selfChecks, build()[1], cr(43, 'Prepare', 80, 'completed', 'success', job(8, 43)), cr(44, 'Agent', 80, 'completed', 'failure', job(8, 44)), cr(45, 'Upload results', 80, 'completed', 'skipped', job(8, 45)), cr(46, 'Cleanup artifacts', 80, 'completed', 'cancelled', job(8, 46))],
+}));
+expect('R1b Copilot code review in its May 2026 shape (path, name, 4 jobs) is ignored', r.failed === null && r.table.slice(1).filter((row) => /\(ignored\)/.test(row[1])).length === 4, r);
 
 r = await run('R2', () => ({ runs: [...self, build()[0], copilot({ status: 'in_progress', conclusion: null })], checks: [...selfChecks, build()[1], copilotCheck('in_progress', null)] }), { TIMEOUT_MINUTES: '10' });
 expect('R2 running Copilot code review is not waited for', r.failed === null && r.elapsed < 120, r);
@@ -147,8 +155,8 @@ expect('R6 a repo workflow named like Copilot code review still counts', /Runnin
 r = await run('R7', () => ({ runs: [...self, build()[0], copilot()], checks: [...selfChecks, build()[1], copilotCheck()] }), { COUNT_COPILOT_REVIEW: 'true' });
 expect('R7 count_copilot_review makes Copilot code review count', /^1 of 2 checks did not pass: Running Copilot Code Review \/ copilot-pull-request-reviewer \(failure\)/.test(r.failed ?? ''), r);
 
-r = await run('R8', () => ({ runs: [...self, copilot()], checks: [...selfChecks, copilotCheck(), cr(42, 'Go tests (api)', 80, 'completed', 'failure')] }));
-expect('R8 another check run in the Copilot check suite still counts', /^1 of 1 checks did not pass: Running Copilot Code Review \/ Go tests \(api\) \(failure\)/.test(r.failed ?? ''), r);
+r = await run('R8', () => ({ runs: [...self, copilot()], checks: [...selfChecks, copilotCheck(), cr(42, 'Go tests (api)', 80, 'completed', 'failure', { html_url: 'https://github.com/o/r/runs/42' })] }));
+expect('R8 a reporter check run that landed in the Copilot check suite still counts', /^1 of 1 checks did not pass: Running Copilot Code Review \/ Go tests \(api\) \(failure\)/.test(r.failed ?? ''), r);
 
 r = await run('R9', () => ({ runs: [...self, dyn(9, 302, 90, 'dynamic/copilot-swe-agent/copilot', 'Running Copilot coding agent', { conclusion: 'failure' })], checks: [...selfChecks, cr(41, 'copilot', 90, 'completed', 'failure')] }));
 expect('R9 a failed Copilot coding agent run still counts', /Running Copilot coding agent \/ copilot \(failure\)/.test(r.failed ?? ''), r);
