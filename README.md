@@ -164,13 +164,15 @@ jobs:
     #   ignore: |          # one name or regular expression per line
     #     RM E2E smoke (dev)
     #   timeout_minutes: 45
+    #   count_copilot_review: true   # GitHub Copilot code review doesn't count by default
 ```
 
 The check to require in the ruleset is **`tests-passed / tests-passed`** (GitHub Actions). Keep the caller's job id `tests-passed`, or the name changes.
 
 - The result is final once nothing has been running or appeared for `settle_seconds` (default 60), so a PR with nothing else to run passes in about a minute.
 - After `timeout_minutes` (default 45) it fails and names what is still running.
-- Only the newest run of each check counts, so a re-run that passes replaces the failure. The result is fixed once the gate finishes, though: after re-running a check, re-run `tests-passed` too, in either direction.
+- Only the newest run of each check counts, so a re-run that passes replaces the failure. The result is fixed once the gate finishes, though: after re-running a check, re-run `tests-passed` too, in either direction. The gate waits for a re-run whose jobs are queued or running, so you can re-run it right after the check. When a check fails, the gate's summary says this.
+- GitHub Copilot code review doesn't count: it is an advisory review, and its run failed on every PR it reviewed in Nov 2026. Set `count_copilot_review: true` to count it. Other `dynamic` runs, such as CodeQL default setup and Dependabot, still count.
 - `ignore` lines also match as regular expressions against the whole name, so `.` matches any character; a bare job name such as `build` ignores it in every workflow. A deploy job that waits for an environment approval belongs here, or the gate times out.
 - A PR can edit its own copy of this file. When it becomes required, protect `.github/workflows/tests-passed.yml` with CODEOWNERS.
 - Dependabot's read-only token is enough; the gate only reads.
