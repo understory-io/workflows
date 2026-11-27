@@ -114,6 +114,30 @@ jobs:
       - name: Update lambda image uri
         env:
           LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
+          FUNCTION_NAME: ${{ inputs.aws_function_name }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
         if: inputs.aws_function_name != '' && env.LAMBDA_EXISTS == 'true'
+        # Runs that deploy the same function close together (several Renovate
+        # PRs against the shared dev function) collide: Lambda rejects an
+        # update while another is in progress (ResourceConflictException).
+        # Only that error is worth waiting out; any other is a real failure.
+        # Waits are bounded so three attempts fit inside the job timeout.
+        # test/lambda-ecr.mjs finds this step by its name.
         run: |
-          aws lambda update-function-code --function-name ${{ inputs.aws_function_name }} --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
+          for attempt in 1 2 3; do
+            timeout 90 aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" || true
+            rc=0
+            output=$(aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "$IMAGE_URI" 2>&1) || rc=$?
+            printf '%s\n' "$output"
+            if [ "$rc" -eq 0 ]; then
+              exit 0
+            fi
+            if ! grep -q 'An error occurred (ResourceConflictException)' <<< "$output"; then
+              exit "$rc"
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Another update of $FUNCTION_NAME is in progress; waiting for it, then retrying (attempt $attempt of 3)."
+            fi
+          done
+          echo "Another update of $FUNCTION_NAME was still in progress after 3 attempts; giving up."
+          exit "$rc"
