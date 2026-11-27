@@ -1,0 +1,46 @@
+name: "lambda-ecr self-test"
+
+# Runs lambda-ecr.yml's deploy step with the runner's own AWS CLI against a
+# fake Lambda API, so a change can't quietly retry a real failure, stop
+# retrying a conflict, or lose the bound on its wait. Both runner images
+# callers deploy from, as their CLIs are what the waiter depends on.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/lambda-ecr.yml"
+      - ".github/workflows/lambda-ecr-selftest.yml"
+      - "test/lambda-ecr.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/lambda-ecr.yml"
+      - ".github/workflows/lambda-ecr-selftest.yml"
+      - "test/lambda-ecr.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "Test (${{ matrix.runner }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Run the scenarios
+        run: |
+          aws --version
+          node test/lambda-ecr.mjs .github/workflows/lambda-ecr.yml

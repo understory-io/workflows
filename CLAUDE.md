@@ -124,6 +124,8 @@ dash0/
 - **Trigger**: `workflow_call`
 - **Architecture Support**: ARM64 and x86_64
 - **Uses**: `docker-build` action internally
+- **Deploy** (only with `aws_function_name`, and only if the function exists): `update-function-code` to `<registry>/<repo>:<prefix>latest`. Callers on `@main` deploy dev from PRs and prod (`prod-`) from main, about 40 repos. Runs that deploy the same function close together collide (`ResourceConflictException`, e.g. several Renovate PRs against the shared dev function), so on `pull_request` runs only, each attempt first runs `timeout 90 aws lambda wait function-updated-v2` (GetFunction, which the existence check already proved allowed; failure ignored), and only a `ResourceConflictException` is retried, at most 3 attempts. Every other error fails at once with the CLI's exit code. No wait after a successful update: the job stays as fast as before, and the next run's own wait covers it. Every other event (push to main, which deploys prod, tags, dispatch) keeps the old single `update-function-code`, no wait and no retry: the tag is mutable and runs aren't serialized, so an older run from main that retried would put its older image live after a newer one and still go green. Keep the waits bounded: 3 × 90 s has to fit the 10-minute `timeout_minutes` default with the build
+- **Test**: `lambda-ecr-selftest.yml` runs `test/lambda-ecr.mjs` on both runner images. It cuts the step's script out of the YAML (the step named `Update lambda image uri`, by indent) and runs it with the runner's real AWS CLI against a fake Lambda API (`AWS_ENDPOINT_URL_LAMBDA`), plus a `timeout` shim that records the limit and enforces 4 s
 
 #### 2. lambda-netcore-ecr (`lambda-netcore-ecr.yml`)
 
