@@ -116,14 +116,22 @@ jobs:
           LAMBDA_EXISTS: ${{ env.LAMBDA_EXISTS }}
           FUNCTION_NAME: ${{ inputs.aws_function_name }}
           IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest
+          EVENT_NAME: ${{ github.event_name }}
         if: inputs.aws_function_name != '' && env.LAMBDA_EXISTS == 'true'
         # Runs that deploy the same function close together (several Renovate
         # PRs against the shared dev function) collide: Lambda rejects an
         # update while another is in progress (ResourceConflictException).
         # Only that error is worth waiting out; any other is a real failure.
         # Waits are bounded so three attempts fit inside the job timeout.
+        # Only PR deploys wait and retry. The tag is mutable and runs aren't
+        # serialized, so an older run from main that retried would put its
+        # older image live after a newer one and still go green; failing keeps
+        # the newer image live and says so.
         # test/lambda-ecr.mjs finds this step by its name.
         run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            exec aws lambda update-function-code --function-name "$FUNCTION_NAME" --image-uri "$IMAGE_URI"
+          fi
           for attempt in 1 2 3; do
             timeout 90 aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" || true
             rc=0

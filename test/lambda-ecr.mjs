@@ -93,7 +93,7 @@ async function run(scenario) {
       AWS_ENDPOINT_URL_LAMBDA: `http://127.0.0.1:${server.address().port}`,
       AWS_ACCESS_KEY_ID: 'AKIDTEST', AWS_SECRET_ACCESS_KEY: 'test', AWS_REGION: 'eu-west-1', AWS_DEFAULT_REGION: 'eu-west-1',
       AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', AWS_EC2_METADATA_DISABLED: 'true',
-      LAMBDA_EXISTS: 'true', FUNCTION_NAME: FN, IMAGE_URI: IMAGE,
+      LAMBDA_EXISTS: 'true', FUNCTION_NAME: FN, IMAGE_URI: IMAGE, EVENT_NAME: scenario.event ?? 'pull_request',
     },
   });
   let out = '';
@@ -123,6 +123,7 @@ expect('the step reads its inputs from env, wired as before',
   stepText.includes('FUNCTION_NAME: ${{ inputs.aws_function_name }}') &&
   stepText.includes('IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag_prefix }}latest') &&
   stepText.includes("if: inputs.aws_function_name != '' && env.LAMBDA_EXISTS == 'true'") &&
+  stepText.includes('EVENT_NAME: ${{ github.event_name }}') &&
   !body.join('\n').includes('${{'), { rc: '-', calls: [], limits: [], seconds: 0, out: stepText });
 
 let r;
@@ -169,6 +170,17 @@ expect('previous update Failed -> the wait gives up at once and the update still
 r = await run({ update: ['conflict'], status: ['InProgress'] });
 expect(`update never finishes -> each wait is cut at its limit, 3 attempts, then fails`,
   r.rc === 254 && r.updates.length === 3 && waited90(r, 3) && r.seconds < 3 * WAIT_LIMIT + 15, r);
+
+// Deploys from main (prod) and tags keep the old one-shot update: no wait, no
+// retry, so an older run can't put its image live after a newer one.
+for (const event of ['push', 'workflow_dispatch']) {
+  r = await run({ event, update: ['conflict', 'ok'], status: ['InProgress'] });
+  expect(`${event}: a conflict fails at once, without waiting or retrying`,
+    r.rc === 254 && r.calls.join() === `update:conflict:${IMAGE}` && r.limits.length === 0 && !r.out.includes('retrying'), r);
+  r = await run({ event, update: ['ok'] });
+  expect(`${event}: no conflict -> one update, no wait, exit 0`,
+    r.rc === 0 && r.calls.join() === `update:ok:${IMAGE}` && r.limits.length === 0, r);
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(fails ? `\n${fails} failed` : '\nall passed');
