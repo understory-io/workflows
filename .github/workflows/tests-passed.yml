@@ -159,12 +159,12 @@ jobs:
               for (const { cr, run } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
                 // GitHub can leave a finished job's check run at in_progress for
-                // good, its conclusion and completed_at already written (storefront
-                // check run 140264796184, Nov 2026). The API sets both only when a
-                // check run completes, and never reopens one, so together they mean
-                // it finished. A conclusion alone still waits: a record GitHub
-                // never writes through the API may time out, but never passes.
-                const done = cr.status === 'completed' || (cr.conclusion != null && cr.completed_at != null);
+                // good, its conclusion and completed_at written and its workflow
+                // run completed (storefront check run 140264796184, Nov 2026). A
+                // completed run has no job left, so the conclusion stands. While
+                // the run goes on, a job that needs the stuck one may not exist
+                // yet, and other apps may reuse a check run, so both wait on status.
+                const done = cr.status === 'completed' || (run?.status === 'completed' && cr.conclusion != null && cr.completed_at != null);
                 // Only the run's own jobs: a check run made with GITHUB_TOKEN (a
                 // test reporter) can land in any Actions check suite on the
                 // commit, Copilot's included, and links to /runs/<id> instead.
