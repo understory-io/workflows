@@ -24,7 +24,8 @@ inputs:
   title:
     description: >-
       Names the check run and identifies the PR comment, so it must be unique
-      among the reports on one PR, e.g. `Go tests (bookings-core)`.
+      among the reports on one PR, e.g. `Go tests (bookings-core)`. The
+      tests-passed gate counts only the newest check run of a title.
     required: true
   artifact-name:
     description: Artifact the JUnit files are uploaded as; unique within the workflow run.

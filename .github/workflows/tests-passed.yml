@@ -12,9 +12,11 @@ name: tests-passed
 # reviewed in Nov 2026.
 #
 # Call it from a workflow of its own (template in README.md). It leaves out
-# every check run of the workflow that calls it, so its own earlier runs,
-# cancelled by `concurrency`, don't count against it; any other job put in
-# that workflow would be left out too.
+# every job of the workflow that calls it, so its own earlier runs, cancelled
+# by `concurrency`, don't count against it; any other job put in that
+# workflow would be left out too. A check run another job posts through the
+# API (a test report) counts in whichever check suite GitHub files it, the
+# gate's own included.
 #
 # Required check: `tests-passed / tests-passed` when the caller's job id is
 # `tests-passed`.
@@ -26,7 +28,7 @@ on:
         description: >-
           Checks to leave out, one per line. A line matches a check whose name
           equals it or fully matches it as a regular expression; for a GitHub
-          Actions check it may also name the workflow, as "<workflow> / <check>".
+          Actions job it may also name the workflow, as "<workflow> / <check>".
         type: string
         required: false
         default: ""
@@ -127,20 +129,35 @@ jobs:
                 github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: sha, per_page: 100 }),
               ]);
               const runBySuite = new Map(runs.map((run) => [run.check_suite_id, run]));
-              const isSelf = (cr, run) => run?.workflow_id === self.workflow_id || cr.check_suite?.id === self.check_suite_id;
+              // A job's check run links to /actions/runs/<run id>/job/<its id>.
+              // One created through the API with GITHUB_TOKEN (a test reporter)
+              // links to /runs/<its id>, and GitHub files it in an Actions check
+              // suite of its choosing, so far the commit's first: often another
+              // workflow's, this gate's own included (bookings, opportunities,
+              // Nov 2026). It is no job of that suite's run. A link of neither
+              // shape is handled as a job, so should GitHub change either one,
+              // the gate neither waits for itself nor merges jobs across workflows.
+              const posted = (cr) => (cr.html_url ?? '').endsWith(`/runs/${cr.id}`) && !(cr.html_url ?? '').includes('/actions/');
+              // This gate's own job never counts, whatever its link, or the
+              // gate would wait for itself until it timed out.
+              const ownJob = (cr) => /(?:^| \/ )tests-passed$/.test(cr.name);
+              const isSelf = (cr, run) => (run?.workflow_id === self.workflow_id || cr.check_suite?.id === self.check_suite_id) && (!posted(cr) || ownJob(cr));
 
               // A workflow can run more than once on a commit: on push and on
               // pull_request, or again for another PR event. As in GitHub's own
               // required checks, the newest check of a name counts, here per
               // workflow and event, so a later run that skips a job doesn't hide
-              // an earlier failure of it.
+              // an earlier failure of it. A posted check run, like another app's,
+              // counts per app and name, whichever suite it landed in, so a
+              // passing re-run replaces an older failure.
               const groups = new Map();
               for (const cr of checkRuns) {
-                const run = runBySuite.get(cr.check_suite?.id);
-                if (isSelf(cr, run)) continue;
+                const suiteRun = runBySuite.get(cr.check_suite?.id);
+                if (isSelf(cr, suiteRun)) continue;
+                const run = posted(cr) ? undefined : suiteRun;
                 const key = run ? `wf:${run.workflow_id}:${run.event}:${cr.name}` : `app:${cr.app?.id}:${cr.name}`;
                 if (!groups.has(key)) groups.set(key, []);
-                groups.get(key).push({ cr, run });
+                groups.get(key).push({ cr, run, suiteRun });
               }
               const kept = [];
               for (const members of groups.values()) {
@@ -156,23 +173,28 @@ jobs:
               const rows = [];
               const runsWithChecks = new Set();
               const runsWithFailures = new Set();
-              for (const { cr, run } of kept) {
+              for (const { cr, run, suiteRun } of kept) {
                 const name = run ? `${run.name} / ${cr.name}` : cr.name;
                 // GitHub can leave a finished job's check run at in_progress for
                 // good, its conclusion and completed_at written and its workflow
                 // run completed (storefront check run 140264796184, Nov 2026). A
                 // completed run has no job left, so the conclusion stands. While
                 // the run goes on, a job that needs the stuck one may not exist
-                // yet, and other apps may reuse a check run, so both wait on status.
+                // yet. Other apps and posted check runs may be updated again,
+                // and the suite's run says nothing about them, so they wait on
+                // status.
                 const done = cr.status === 'completed' || (run?.status === 'completed' && cr.conclusion != null && cr.completed_at != null);
-                // Only the run's own jobs: a check run made with GITHUB_TOKEN (a
-                // test reporter) can land in any Actions check suite on the
-                // commit, Copilot's included, and links to /runs/<id> instead.
+                // Only check runs linked as the Copilot run's own jobs: anything
+                // else filed in its suite is another job's, and counts.
                 const copilot = isCopilotReview(run) && (cr.html_url ?? '').includes(`/actions/runs/${run.id}/job/`);
                 const state = copilot || ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
                 if (run) runsWithChecks.add(run.id);
-                // An ignored failure explains its run's failure too.
-                if (run && done && !PASS.has(cr.conclusion)) runsWithFailures.add(run.id);
+                // An ignored failure of a job explains its run's failure too. So
+                // does a posted one that counts and isn't ignored, for the run
+                // whose suite holds it, should GitHub fail that run for it. A
+                // posted one that a re-run replaced, or that is ignored, explains
+                // nothing: it could hide that run's own failure.
+                if (suiteRun && done && !PASS.has(cr.conclusion) && (run || state !== 'ignored')) runsWithFailures.add(suiteRun.id);
                 const stuck = done && cr.status !== 'completed' ? cr.status : null;
                 rows.push({ id: `check:${cr.id}`, name, result: done ? cr.conclusion : cr.status, stuck, state, url: cr.html_url });
               }
