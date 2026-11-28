@@ -232,7 +232,7 @@ r = await run('U1b', () => ({ runs: [...self, knock()[0], rerunBuild()[0]], chec
 expect('U1b a passing re-run report filed in the same first-attempt suite replaces the failed one', r.failed === null && goRows(r.table).length === 1, r);
 
 r = await run('U1c', () => ({ runs: [...self, knock({ conclusion: 'failure' })[0], rerunBuild()[0], wrun(7, 3, 70)], checks: [...selfJobs, knock()[1], ...rerunBuild().slice(1), posted(30, GO, 50, 'failure'), posted(31, GO, 70, 'success')] }));
-expect('U1c a run failed only by a replaced report in its suite does not fail the gate', r.failed === null && !r.table.slice(1).some((row) => row[0].includes('(workflow)')), r);
+expect("U1c a replaced failed report doesn't hide its host run's own failure", /^1 of \d+ checks did not pass: wf2 \(workflow\) \(failure\)/.test(r.failed ?? ''), r);
 
 r = await run('U1d', () => ({ runs: [...self, knock()[0], rerunBuild()[0], wrun(7, 3, 70)], checks: [...selfJobs, knock()[1], ...rerunBuild().slice(1), posted(30, GO, 70, 'success'), posted(31, GO, 50, 'failure')] }));
 expect('U1d a newer failed report replaces an older pass', new RegExp(`^1 of \\d+ checks did not pass: ${GO.replace(/[()]/g, '\\$&')} \\(failure\\)`).test(r.failed ?? ''), r);
