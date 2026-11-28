@@ -189,11 +189,12 @@ jobs:
                 const copilot = isCopilotReview(run) && (cr.html_url ?? '').includes(`/actions/runs/${run.id}/job/`);
                 const state = copilot || ignored(cr.name, name) ? 'ignored' : !done ? 'pending' : PASS.has(cr.conclusion) ? 'pass' : 'fail';
                 if (run) runsWithChecks.add(run.id);
-                // An ignored failure explains its run's failure too. So does a
-                // posted one that counts, for the run whose suite holds it,
-                // should GitHub fail that run for it; one a re-run replaced
-                // explains nothing, or it could hide that run's own failure.
-                if (suiteRun && done && !PASS.has(cr.conclusion)) runsWithFailures.add(suiteRun.id);
+                // An ignored failure of a job explains its run's failure too. So
+                // does a posted one that counts and isn't ignored, for the run
+                // whose suite holds it, should GitHub fail that run for it. A
+                // posted one that a re-run replaced, or that is ignored, explains
+                // nothing: it could hide that run's own failure.
+                if (suiteRun && done && !PASS.has(cr.conclusion) && (run || state !== 'ignored')) runsWithFailures.add(suiteRun.id);
                 const stuck = done && cr.status !== 'completed' ? cr.status : null;
                 rows.push({ id: `check:${cr.id}`, name, result: done ? cr.conclusion : cr.status, stuck, state, url: cr.html_url });
               }

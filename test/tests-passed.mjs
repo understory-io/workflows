@@ -286,6 +286,9 @@ expect('U9 a run that never started stays red, though a replaced failed report s
 r = await run('U10', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' })], checks: [...selfJobs, jobCr(21, GO, 50, 5, 'completed', 'failure'), posted(30, GO, 50, 'success')] }));
 expect("U10 a newer report never replaces a job's failure of the same name", /did not pass: wf1 \/ Go tests \(bookings-core\) \(failure\)/.test(r.failed ?? ''), r);
 
+r = await run('U11', () => ({ runs: [...self, wrun(5, 2, 50, { conclusion: 'failure' })], checks: [...selfJobs, posted(30, 'Flaky e2e', 50, 'failure')] }), { IGNORE: 'Flaky e2e' });
+expect("U11 an ignored report doesn't explain the failure of the run whose suite holds it", /did not pass: wf2 \(workflow\) \(failure\)/.test(r.failed ?? ''), r);
+
 r = await run('S', (p) =>({ runs: [...self, wrun(5, 1, 50, p < 3 ? { run_attempt: 2, status: 'queued', conclusion: null } : { run_attempt: 2 })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, p < 3 ? 'queued' : 'completed', p < 3 ? null : 'success')] }));
 expect('S gate re-run while a check re-run is queued waits for it', r.failed === null && r.polls >= 5, r);
 
