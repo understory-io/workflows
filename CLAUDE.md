@@ -181,7 +181,20 @@ dash0/
 - **Purpose**: Pull translations from Crowdin and open a PR
 - **Trigger**: `workflow_call`
 
-#### 9b. tests-passed (`tests-passed.yml`)
+#### 9a. notifications-knock-translations (`notifications-knock-translations.yml`)
+
+- **Purpose**: sync a go-notifications service's committed Knock translations (`<app-dir>/.knock/translations/<lang>/<namespace>.<lang>.json`) with Knock. Caller template in README.md.
+- **Trigger**: `workflow_call`; the caller's event picks the job: `pull_request` (not closed) → `preview`, `pull_request` closed → `cleanup`, anything else → `production`.
+- **Inputs**: `app-dir`, `namespace` (required), `regenerate-command` (only for the stale-file error), `knock-cli` (`@knocklabs/cli@1.6.3`), `timeout_minutes` (10). Secrets: `knock-service-token`, `go-private-modules-pat` (preview only).
+- **preview**: `notifications-extract -check` and `notifications-knock -check` (tools from the app's go.mod), then validates and pushes, with `--commit`, every `<namespace>` file to the Knock branch `<repo>-pr-<number>` (the repo is in the slug because Knock branches are account-wide). Concurrency per namespace and PR, newest wins.
+- **production**: no Go; pushes the committed files to development with the message `<repo> <namespace> <sha>`, finds that commit by message (`commit list --json`, `created_at`), makes an `--allow-empty` one when the push changed nothing, and promotes it with `commit promote --only`. Never a blanket promote, which would ship other teams' unpromoted work. Concurrency per namespace, never cancelled.
+
+#### 9b. notifications-crowdin-pull-translations (`notifications-crowdin-pull-translations.yml`)
+
+- **Purpose**: `crowdin-pull-translations` for go-notifications services: downloads, flattens each app's `i18n/generated`, regenerates its Knock files with the go-notifications version in its go.mod (`GOTOOLCHAIN=auto` from a stable setup-go), commits both to `l10n_<base>` and opens an auto-merging PR with `pr-token`. A separate workflow rather than inputs on `crowdin-pull-translations` because that one's build step is npm-only.
+- **Inputs**: `apps` (one `"<app-dir> <namespace>"` per line), `base`, `crowdin-download-flags`, `timeout_minutes` (10). Secrets: `crowdin-project-id`, `crowdin-token`, `pr-token`, `go-private-modules-pat`.
+
+#### 9c. tests-passed (`tests-passed.yml`)
 
 - **Purpose**: one check (`tests-passed / tests-passed`) a ruleset can require on every PR, since path-filtered workflows leave their own required checks pending forever. Caller template in README.md: `on: pull_request` with no filters, `concurrency` per PR, `actions: read`, `checks: read`, `statuses: read`.
 - **Trigger**: `workflow_call`

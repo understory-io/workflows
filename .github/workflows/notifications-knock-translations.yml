@@ -1,0 +1,207 @@
+name: Notifications Knock Translations
+
+# Syncs the Knock translations a go-notifications service commits
+# (<app-dir>/.knock/translations/<lang>/<namespace>.<lang>.json) with Knock.
+# The service owns its namespace and is the only one that pushes it.
+#
+# - Pull request (opened, synchronize, reopened): checks the extracted source
+#   and the Knock files match the copy, then pushes the Knock files to a Knock
+#   branch of the pull request's own for preview.
+# - Pull request closed: deletes that Knock branch.
+# - Any other event (push to main, workflow_dispatch): pushes the committed
+#   Knock files to development and promotes exactly the commit it made to
+#   production, never a blanket promote.
+#
+# The caller decides when it runs (its `on:` paths); see the README.
+
+on:
+  workflow_call:
+    inputs:
+      app-dir:
+        description: 'Directory of the service: holds go.mod, knock.json, i18n/ and .knock/'
+        type: string
+        required: true
+      namespace:
+        description: 'The Knock translation namespace the service owns, e.g. bookings'
+        type: string
+        required: true
+      regenerate-command:
+        description: 'How a developer regenerates the files, shown when they are stale'
+        type: string
+        default: 'go generate ./...'
+      knock-cli:
+        description: 'Knock CLI package and version'
+        type: string
+        default: '@knocklabs/cli@1.6.3'
+      timeout_minutes:
+        description: "Max minutes before a job is cancelled (override the measured default)"
+        type: number
+        required: false
+        default: 10
+    secrets:
+      knock-service-token:
+        required: true
+      go-private-modules-pat:
+        # Only the pull request check runs Go.
+        required: false
+
+env:
+  KNOCK_CLI: ${{ inputs.knock-cli }}
+  KNOCK_NAMESPACE: ${{ inputs.namespace }}
+  # The CLI reads KNOCK_SERVICE_TOKEN itself.
+  KNOCK_SERVICE_TOKEN: ${{ secrets.knock-service-token }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # knock.json's knockDir is resolved against the working directory.
+        working-directory: ${{ inputs.app-dir }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    # The newest push of a pull request wins.
+    concurrency:
+      group: knock-${{ inputs.namespace }}-translations-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.app-dir }}/go.mod
+          cache: false
+      - name: Configure access to private Go modules
+        env:
+          GO_PRIVATE_MODULES_PAT: ${{ secrets.go-private-modules-pat }}
+        run: |
+          git config --global \
+            url."https://understory-services:${GO_PRIVATE_MODULES_PAT}@github.com/understory-io".insteadOf \
+            "https://github.com/understory-io"
+          echo "GOPRIVATE=github.com/understory-io/*" >> "$GITHUB_ENV"
+          echo "GONOSUMDB=github.com/understory-io/*" >> "$GITHUB_ENV"
+      # Downloaded on its own, so a failed download is not reported as stale
+      # files below. The tools come from the go-notifications version in go.mod.
+      - name: Download the notification tools
+        run: go mod download github.com/understory-io/go-notifications
+      - name: Check the extracted source and the Knock files are current
+        env:
+          REGENERATE: ${{ inputs.regenerate-command }}
+        run: |
+          go run github.com/understory-io/go-notifications/cmd/notifications-extract \
+            -check -out i18n/extracted/notifications.json ./ \
+            || { echo "::error::i18n/extracted/notifications.json is stale; run \`$REGENERATE\` in ${{ inputs.app-dir }} and commit"; exit 1; }
+          go run github.com/understory-io/go-notifications/cmd/notifications-knock \
+            -check -namespace "$KNOCK_NAMESPACE" -source i18n/extracted/notifications.json \
+            -translations i18n/generated -out .knock \
+            || { echo "::error::.knock/translations is stale; run \`$REGENERATE\` in ${{ inputs.app-dir }} and commit"; exit 1; }
+
+      - name: Validate and push to the pull request's Knock branch
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Knock branches are shared by the whole account, so the slug names
+          # the repository as well as the pull request.
+          branch=$(echo "${GITHUB_REPOSITORY#*/}-pr-$PR_NUMBER" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+          shopt -s nullglob
+          files=(.knock/translations/*/"$KNOCK_NAMESPACE".*.json)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no $KNOCK_NAMESPACE translation files found"; exit 1; }
+          # Fails when the branch already exists, which is the normal case on
+          # every push after the first; a real failure shows in the push below.
+          npx --yes "$KNOCK_CLI" branch create "$branch" || true
+          for file in "${files[@]}"; do
+            locale=$(basename "$(dirname "$file")")
+            ref="$KNOCK_NAMESPACE.$locale"
+            npx --yes "$KNOCK_CLI" translation validate "$ref" --branch "$branch"
+            # Knock renders only committed translations, so a preview needs
+            # the commit too. Branch commits never reach development.
+            npx --yes "$KNOCK_CLI" translation push "$ref" --branch "$branch" \
+              --commit -m "$GITHUB_REPOSITORY#$PR_NUMBER ${GITHUB_SHA::7}"
+          done
+          echo "Previewing on Knock branch \`$branch\`." >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Delete the pull request's Knock branch
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          branch=$(echo "${GITHUB_REPOSITORY#*/}-pr-$PR_NUMBER" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+          npx --yes "$KNOCK_CLI" branch delete "$branch" --force || echo "no Knock branch $branch to delete"
+
+  production:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # knock.json's knockDir is resolved against the working directory.
+        working-directory: ${{ inputs.app-dir }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    # Runs for one namespace never overlap, so development only ever holds the
+    # copy of the run that is promoting it. GitHub keeps one pending run per
+    # group and cancels an older pending one, which is safe: every run pushes
+    # the whole namespace as of its own commit, so the newer run carries the
+    # same change.
+    concurrency:
+      group: knock-${{ inputs.namespace }}-translations-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # The committed Knock files are what goes live; the pull request's check
+      # made sure they match the copy. Production cannot be written to
+      # directly. Push the files to development, then promote only the
+      # translation commit they produced, never a blanket
+      # `knock commit promote`, which would also ship other teams' unpromoted
+      # work.
+      - name: Push to development and promote to production
+        run: |
+          shopt -s nullglob
+          files=(.knock/translations/*/"$KNOCK_NAMESPACE".*.json)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no $KNOCK_NAMESPACE translation files found"; exit 1; }
+          message="$GITHUB_REPOSITORY $KNOCK_NAMESPACE $GITHUB_SHA"
+          for file in "${files[@]}"; do
+            locale=$(basename "$(dirname "$file")")
+            ref="$KNOCK_NAMESPACE.$locale"
+            npx --yes "$KNOCK_CLI" translation validate "$ref" --environment development
+            npx --yes "$KNOCK_CLI" translation push "$ref" --environment development \
+              --commit -m "$message"
+
+            # A push that changed nothing makes no commit. An empty one gives
+            # this run a commit of its own to promote, so it never has to
+            # guess which unpromoted commit is its own.
+            commit_id() {
+              npx --yes "$KNOCK_CLI" commit list --json \
+                --environment development --resource-type translation \
+                --resource-id "$locale/$KNOCK_NAMESPACE" --limit 50 \
+                | jq -r --arg m "$message" \
+                  '[.entries[] | select(.commit_message == $m)] | sort_by(.created_at) | last | .id // empty'
+            }
+            id=$(commit_id)
+            if [ -z "$id" ]; then
+              npx --yes "$KNOCK_CLI" commit --environment development \
+                --resource-type translation --resource-id "$locale/$KNOCK_NAMESPACE" \
+                --allow-empty -m "$message" --force
+              id=$(commit_id)
+            fi
+            [ -n "$id" ] || { echo "::error::no Knock commit found for $ref"; exit 1; }
+            npx --yes "$KNOCK_CLI" commit promote --only "$id" --force
+          done
