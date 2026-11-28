@@ -156,7 +156,7 @@ r = await run('R7', () => ({ runs: [...self, build()[0], copilot()], checks: [..
 expect('R7 count_copilot_review makes Copilot code review count', /^1 of 2 checks did not pass: Running Copilot Code Review \/ copilot-pull-request-reviewer \(failure\)/.test(r.failed ?? ''), r);
 
 r = await run('R8', () => ({ runs: [...self, copilot()], checks: [...selfChecks, copilotCheck(), cr(42, 'Go tests (api)', 80, 'completed', 'failure', { html_url: 'https://github.com/o/r/runs/42' })] }));
-expect('R8 a reporter check run that landed in the Copilot check suite still counts', /^1 of 1 checks did not pass: Running Copilot Code Review \/ Go tests \(api\) \(failure\)/.test(r.failed ?? ''), r);
+expect('R8 a reporter check run that landed in the Copilot check suite still counts, under its own name', /^1 of 1 checks did not pass: Go tests \(api\) \(failure\)/.test(r.failed ?? ''), r);
 
 r = await run('R9', () => ({ runs: [...self, dyn(9, 302, 90, 'dynamic/copilot-swe-agent/copilot', 'Running Copilot coding agent', { conclusion: 'failure' })], checks: [...selfChecks, cr(41, 'copilot', 90, 'completed', 'failure')] }));
 expect('R9 a failed Copilot coding agent run still counts', /Running Copilot coding agent \/ copilot \(failure\)/.test(r.failed ?? ''), r);
@@ -168,6 +168,13 @@ expect('R9b a Copilot coding agent run that failed without a check still counts'
   const yml = wf.join('\n');
   const ok = /count_copilot_review:\n\s+description: [^\n]*\n(?:\s{10}[^\n]*\n)*\s+type: boolean\n\s+required: false\n\s+default: false\n/.test(yml) && yml.includes('COUNT_COPILOT_REVIEW: ${{ inputs.count_copilot_review }}');
   console.log(`${ok ? 'ok  ' : 'FAIL'} count_copilot_review is a boolean input, off by default, passed to the script`);
+  if (!ok) fails++;
+}
+
+{
+  // ownJob() in the script knows the gate's job by this name.
+  const ok = /\njobs:\n  tests-passed:\n    name: tests-passed\n/.test(wf.join('\n'));
+  console.log(`${ok ? 'ok  ' : 'FAIL'} the gate's job is named tests-passed, as ownJob() expects`);
   if (!ok) fails++;
 }
 
@@ -205,7 +212,81 @@ expect("T8 another app's check run counts by status alone", /^timed out after 5 
 r = await run('T9', () => ({ runs: [...self, wrun(5, 1, 50, { run_attempt: 2, status: 'queued', conclusion: null })], checks: [...selfChecks, stuckCheck(10, 'build', 50, 'success'), cr(12, 'build', 50, 'queued', null)] }), { TIMEOUT_MINUTES: '5' });
 expect("T9 a re-run's queued check run replaces a stuck one of the same name", /^timed out after 5 min; still running: wf1 \/ build \(queued\)/.test(r.failed ?? ''), r);
 
-r = await run('S', (p) => ({ runs: [...self, wrun(5, 1, 50, p < 3 ? { run_attempt: 2, status: 'queued', conclusion: null } : { run_attempt: 2 })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, p < 3 ? 'queued' : 'completed', p < 3 ? null : 'success')] }));
+// A check run that test-report posts with GITHUB_TOKEN: completed at once,
+// linked to /runs/<id>, filed by GitHub in the commit's first Actions check
+// suite (bookings runs 45582310497 and 45989429597, Knock translations).
+const posted = (id, name, suite, conclusion, extra = {}) => cr(id, name, suite, 'completed', conclusion, { html_url: `https://github.com/o/r/runs/${id}`, ...extra });
+const jobCr = (id, name, suite, runId, status, conclusion, extra = {}) => cr(id, name, suite, status, conclusion, { ...job(runId, id), ...extra });
+const GO = 'Go tests (bookings-core)';
+// The gate's jobs with real links, so they read as jobs, not posted check runs.
+const selfJobs = [cr(1, 'tests-passed / tests-passed', 999, 'in_progress', null, job(1, 1)), cr(0, 'tests-passed / tests-passed', 998, 'completed', 'cancelled', job(0, 0))];
+// Knock translations (wf2, run 5, suite 50, first on the commit) and the build (wf1, run 6, suite 60).
+const knock = (extra = {}) => [wrun(5, 2, 50, extra), jobCr(20, 'knock / preview', 50, 5, 'completed', 'success')];
+const rerunBuild = () => [wrun(6, 1, 60, { run_attempt: 2 }), jobCr(21, 'build / build', 60, 6, 'completed', 'failure'), jobCr(22, 'build / build', 60, 6, 'completed', 'success')];
+const goRows = (t) => t.slice(1).filter((row) => row[0].includes(`>${GO}<`));
+
+r = await run('U1', () => ({ runs: [...self, knock()[0], rerunBuild()[0], wrun(7, 3, 70)], checks: [...selfJobs, knock()[1], ...rerunBuild().slice(1), posted(30, GO, 50, 'failure'), posted(31, GO, 70, 'success')] }));
+expect('U1 a passing re-run report filed in another suite replaces the failed one', r.failed === null && goRows(r.table).length === 1 && /success/.test(goRows(r.table)[0][1]), r);
+
+r = await run('U1b', () => ({ runs: [...self, knock()[0], rerunBuild()[0]], checks: [...selfJobs, knock()[1], ...rerunBuild().slice(1), posted(30, GO, 50, 'failure'), posted(31, GO, 50, 'success')] }));
+expect('U1b a passing re-run report filed in the same first-attempt suite replaces the failed one', r.failed === null && goRows(r.table).length === 1, r);
+
+r = await run('U1c', () => ({ runs: [...self, knock({ conclusion: 'failure' })[0], rerunBuild()[0], wrun(7, 3, 70)], checks: [...selfJobs, knock()[1], ...rerunBuild().slice(1), posted(30, GO, 50, 'failure'), posted(31, GO, 70, 'success')] }));
+expect('U1c a run failed only by a replaced report in its suite does not fail the gate', r.failed === null && !r.table.slice(1).some((row) => row[0].includes('(workflow)')), r);
+
+r = await run('U1d', () => ({ runs: [...self, knock()[0], rerunBuild()[0], wrun(7, 3, 70)], checks: [...selfJobs, knock()[1], ...rerunBuild().slice(1), posted(30, GO, 70, 'success'), posted(31, GO, 50, 'failure')] }));
+expect('U1d a newer failed report replaces an older pass', new RegExp(`^1 of \\d+ checks did not pass: ${GO.replace(/[()]/g, '\\$&')} \\(failure\\)`).test(r.failed ?? ''), r);
+
+r = await run('U2', () => ({ runs: [...self, knock({ conclusion: 'failure' })[0], wrun(6, 1, 60, { conclusion: 'failure' })], checks: [...selfJobs, knock()[1], jobCr(21, 'build / build', 60, 6, 'completed', 'failure'), posted(30, GO, 50, 'failure')] }));
+expect('U2 a failed report counts under its own name, and explains the run it was filed in', /^2 of 3 checks did not pass: Go tests \(bookings-core\) \(failure\), wf1 \/ build \/ build \(failure\)\./.test(r.failed ?? ''), r);
+
+r = await run('U3', () => ({ runs: [...self, wrun(5, 2, 50), wrun(9, 4, 90)], checks: [...selfJobs, posted(30, GO, 90, 'failure'), posted(31, GO, 50, 'success')] }));
+expect("U3 the newest report wins, not the one in the newest run's suite", r.failed === null, r);
+
+r = await run('U4', () => ({ runs: self, checks: [...selfJobs, posted(30, GO, 999, 'failure')] }), { TIMEOUT_MINUTES: '10' });
+expect("U4 a failed report filed in the gate's own suite counts (US-17700), without waiting for the gate", /^1 of 1 checks did not pass: Go tests \(bookings-core\) \(failure\)\./.test(r.failed ?? '') && r.elapsed < 120, r);
+
+r = await run('U4b', () => ({ runs: self, checks: [...selfJobs, posted(30, GO, 999, 'success')] }), { TIMEOUT_MINUTES: '10' });
+expect("U4b a passing report in the gate's own suite passes after the settle, not a timeout", r.failed === null && r.elapsed < 120 && goRows(r.table).length === 1, r);
+
+r = await run('U4c', () => ({ runs: self, checks: [...selfJobs, posted(30, GO, 998, 'failure')] }));
+expect("U4c a failed report filed in an earlier, cancelled gate run's suite counts", /^1 of 1 checks did not pass: Go tests/.test(r.failed ?? ''), r);
+
+for (const [label, url] of [['no link', null], ['an old-style link', 'https://github.com/o/r/runs/1?check_suite_focus=true'], ['a link like a posted one', 'https://github.com/o/r/runs/1']]) {
+  r = await run('U4d', () => ({ runs: self, checks: [cr(1, 'tests-passed / tests-passed', 999, 'in_progress', null, { html_url: url }), selfJobs[1]] }), { TIMEOUT_MINUTES: '10' });
+  expect(`U4d the gate's own running job with ${label} is still left out`, r.failed === null && r.elapsed < 120, r);
+}
+
+r = await run('U4e', () => ({ runs: self, checks: [...selfJobs, cr(2, 'lint', 999, 'completed', 'failure', { html_url: 'https://github.com/o/r/actions/runs/1/job/2' })] }));
+expect("U4e another job of the gate's workflow is still left out", r.failed === null, r);
+
+r = await run('U5', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' }), wrun(6, 3, 60)], checks: [...selfJobs, jobCr(21, 'test', 50, 5, 'completed', 'failure'), jobCr(22, 'test', 60, 6, 'completed', 'success'), posted(30, 'Go tests', 50, 'failure'), posted(31, 'Go tests', 50, 'success')] }));
+expect("U5 two reporters titled alike collapse to the newest; the failed test job still fails the gate", /^1 of 3 checks did not pass: wf1 \/ test \(failure\)\./.test(r.failed ?? '') && r.table.slice(1).filter((row) => row[0].includes('>Go tests<')).length === 1, r);
+
+r = await run('U6', (p) => ({ runs: [...self, knock()[0], wrun(6, 1, 60, p < 3 ? { status: 'in_progress', conclusion: null } : { conclusion: 'failure' })], checks: [...selfJobs, knock()[1], jobCr(21, 'build / build', 60, 6, p < 3 ? 'in_progress' : 'completed', p < 3 ? null : 'failure'), ...(p >= 1 ? [posted(30, GO, 50, 'success')] : [])] }));
+expect('U6 a report filed while its job still runs: the job is waited for and counts', /^1 of 3 checks did not pass: wf1 \/ build \/ build \(failure\)\./.test(r.failed ?? '') && r.polls >= 4, r);
+
+r = await run('U6b', (p) => ({ runs: [...self, wrun(7, 3, 70, p < 3 ? { status: 'queued', conclusion: null } : {})], checks: [...selfJobs, posted(30, GO, 70, 'success'), ...(p < 3 ? [] : [jobCr(23, 'deploy', 70, 7, 'completed', 'success')])] }));
+expect('U6b a run whose suite holds only a report is still starting, and is waited for', r.failed === null && r.polls >= 5 && r.table.length === 3, r);
+
+r = await run('U7', () => ({ runs: [...self, wrun(5, 2, 50)], checks: [...selfJobs, posted(30, GO, 50, 'success', { status: 'in_progress', completed_at: '2026-11-27T01:54:22Z' })] }), { TIMEOUT_MINUTES: '5' });
+expect("U7 a report left at in_progress counts by status alone, not by its suite's run", /^timed out after 5 min; still running: Go tests \(bookings-core\) \(in_progress\)/.test(r.failed ?? ''), r);
+
+r = await run('U7b', () => ({ runs: [...self, wrun(5, 1, 50)], checks: [...selfJobs, stuckCheck(21, 'build', 50, 'success', job(5, 21))] }), { TIMEOUT_MINUTES: '10' });
+expect('U7b a job linked to its run, stuck at in_progress in a completed run, still passes at once', r.failed === null && r.elapsed < 120, r);
+
+r = await run('U8', () => ({ runs: [...self, knock()[0]], checks: [...selfJobs, knock()[1], posted(30, GO, 50, 'failure')] }), { IGNORE: 'wf2 / Go tests \\(bookings-core\\)' });
+expect("U8 a report isn't ignored by the name of the workflow it was filed in", /did not pass: Go tests/.test(r.failed ?? ''), r);
+r = await run('U8b', () => ({ runs: [...self, knock()[0]], checks: [...selfJobs, knock()[1], posted(30, GO, 50, 'failure')] }), { IGNORE: 'Go tests \\(.*\\)' });
+expect('U8b a report is ignored by its own name', r.failed === null && /\(ignored\)/.test(goRows(r.table)[0]?.[1] ?? ''), r);
+
+r = await run('U9', () => ({ runs: [...self, wrun(5, 2, 50, { conclusion: 'startup_failure' }), wrun(7, 3, 70)], checks: [...selfJobs, jobCr(23, 'deploy', 70, 7, 'completed', 'success'), posted(30, GO, 50, 'failure'), posted(31, GO, 70, 'success')] }));
+expect('U9 a run that never started stays red, though a replaced failed report sits in its suite', /^1 of \d+ checks did not pass: wf2 \(workflow\) \(startup_failure\)/.test(r.failed ?? ''), r);
+
+r = await run('U10', () => ({ runs: [...self, wrun(5, 1, 50, { conclusion: 'failure' })], checks: [...selfJobs, jobCr(21, GO, 50, 5, 'completed', 'failure'), posted(30, GO, 50, 'success')] }));
+expect("U10 a newer report never replaces a job's failure of the same name", /did not pass: wf1 \/ Go tests \(bookings-core\) \(failure\)/.test(r.failed ?? ''), r);
+
+r = await run('S', (p) =>({ runs: [...self, wrun(5, 1, 50, p < 3 ? { run_attempt: 2, status: 'queued', conclusion: null } : { run_attempt: 2 })], checks: [...selfChecks, cr(10, 'build / build', 50, 'completed', 'failure'), cr(12, 'build / build', 50, p < 3 ? 'queued' : 'completed', p < 3 ? null : 'success')] }));
 expect('S gate re-run while a check re-run is queued waits for it', r.failed === null && r.polls >= 5, r);
 
 process.exit(fails ? 1 : 0);

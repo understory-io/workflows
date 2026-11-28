@@ -139,7 +139,7 @@ CI fetches the rules at the exact commit of the workflow the caller resolved, an
 
 Most service workflows are path-filtered, and a required check from a workflow that didn't run stays "Expected" forever. `tests-passed` runs on every PR instead and watches the head commit: every other check run and commit status (Vercel included). It passes when all of them succeeded, were neutral or skipped. It fails when any failed, was cancelled, timed out or needs action, or when a workflow couldn't start. The job summary lists every check and its result.
 
-Add this file to a repo as `.github/workflows/tests-passed.yml`. Keep it a workflow of its own: the gate leaves out every check of the workflow that calls it.
+Add this file to a repo as `.github/workflows/tests-passed.yml`. Keep it a workflow of its own: the gate leaves out every job of the workflow that calls it.
 
 ```yaml
 name: tests-passed
@@ -172,9 +172,10 @@ The check to require in the ruleset is **`tests-passed / tests-passed`** (GitHub
 - The result is final once nothing has been running or appeared for `settle_seconds` (default 60), so a PR with nothing else to run passes in about a minute.
 - After `timeout_minutes` (default 45) it fails and names what is still running.
 - GitHub sometimes leaves a finished job's check run "in progress" for good. Once its workflow run has completed, a check run with a recorded conclusion and completion time counts by that conclusion, whatever its status says, and the summary marks it "(GitHub still reports in_progress)".
-- Only the newest run of each check counts, so a re-run that passes replaces the failure. The result is fixed once the gate finishes, though: after re-running a check, re-run `tests-passed` too, in either direction. The gate waits for a re-run whose jobs are queued or running, so you can re-run it right after the check. When a check fails, the gate's summary says this.
+- Only the newest run of each check counts, so a re-run that passes replaces the failure. For a job that is per workflow and event. A check run that a job posts through the API, such as a test report, counts by its name alone: GitHub files it in whichever workflow's check suite it picks, the gate's own included. So give each test report its own title; two with the same title count as one, the newest.
+- The result is fixed once the gate finishes: after re-running a check, re-run `tests-passed` too, in either direction. The gate waits for a re-run whose jobs are queued or running, so you can re-run it right after the check. When a check fails, the gate's summary says this.
 - GitHub Copilot code review doesn't count: it is an advisory review, and its run failed on every PR it reviewed in Nov 2026. Set `count_copilot_review: true` to count it. Other `dynamic` runs, such as CodeQL default setup and Dependabot, still count.
-- `ignore` lines also match as regular expressions against the whole name, so `.` matches any character; a bare job name such as `build` ignores it in every workflow. A deploy job that waits for an environment approval belongs here, or the gate times out.
+- `ignore` lines also match as regular expressions against the whole name, so `.` matches any character; a bare job name such as `build` ignores it in every workflow. A test report is ignored by its own name only. A deploy job that waits for an environment approval belongs here, or the gate times out.
 - A PR can edit its own copy of this file. When it becomes required, protect `.github/workflows/tests-passed.yml` with CODEOWNERS.
 - Dependabot's read-only token is enough; the gate only reads.
 
